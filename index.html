@@ -259,6 +259,7 @@ table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
   .stats{grid-template-columns:repeat(2,1fr);}
 }
 </style>
+<script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -295,7 +296,11 @@ table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
         Importar (.json)
       </button>
       <input type="file" id="fileImport" accept="application/json,.json" style="display:none">
-      <div class="autosave" id="autosaveLbl">Autoguardado activo</div>
+      <button class="minib" id="btnLogout">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+        Cerrar sesión
+      </button>
+      <div class="autosave" id="autosaveLbl">Conectado a la nube</div>
     </div>
   </aside>
 
@@ -1084,14 +1089,82 @@ if(btnImp){
   btnImp.onclick=async()=>{ try{ await reloadDB(); toast('Datos actualizados'); go(current); }catch(e){ toast('Error: '+e.message); } };
 }
 
+/* ================= AUTENTICACIÓN MICROSOFT (Azure AD) ================= */
+/* El login solo valida identidad (que seas de la organización 4housing22).
+   Los datos viven en Supabase, no en SharePoint, así que no pide permisos de archivos. */
+const MSAL_CONFIG = {
+  clientId: '66a475e3-745f-4931-8085-ee71a0b6d6fe',
+  tenantId: 'c408b6d8-ae0b-4d30-9056-da52e18116c4',
+  authority: 'https://login.microsoftonline.com/c408b6d8-ae0b-4d30-9056-da52e18116c4',
+  redirectUri: 'https://labo-comercial.github.io/4housing-rental/',
+};
+let _msal = null, AUTH_USER = null;
+
+function authScreen(msg, btn){
+  document.body.innerHTML = `
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#eceae1;font-family:'Archivo',sans-serif;">
+    <div style="background:#fff;border:1px solid #e2dfd4;border-radius:16px;padding:40px 38px;max-width:380px;text-align:center;box-shadow:0 14px 44px rgba(0,0,0,.10);">
+      <div style="font-family:'Quicksand',sans-serif;font-weight:700;font-size:22px;color:#37432c;margin-bottom:6px;">4housing <span style="color:#9db98b;">Rental</span></div>
+      <div style="font-size:13px;color:#94917f;margin-bottom:26px;">Cotizador & CRM</div>
+      <div style="font-size:14px;color:#5f5c52;margin-bottom:22px;line-height:1.5;">${msg}</div>
+      ${btn?`<button id="authBtn" style="background:#5f7a4e;color:#fff;border:none;border-radius:9px;padding:12px 22px;font-size:14px;font-weight:600;cursor:pointer;font-family:inherit;">${btn}</button>`:''}
+    </div>
+  </div>`;
+}
+
+async function doLogin(){
+  try{
+    const res = await _msal.loginPopup({ scopes:['User.Read'], redirectUri:MSAL_CONFIG.redirectUri });
+    if(res && res.account){ _msal.setActiveAccount(res.account); location.reload(); }
+  }catch(e){
+    authScreen('No se pudo iniciar sesión.<br><span style="font-size:12px;color:#94917f">'+esc(e.message||e)+'</span>', 'Reintentar');
+    setTimeout(()=>{ const b=document.getElementById('authBtn'); if(b) b.onclick=doLogin; }, 50);
+  }
+}
+
+async function initAuth(){
+  if(typeof msal === 'undefined'){
+    // La librería no cargó (sin internet o CDN bloqueado)
+    authScreen('No se pudo cargar el sistema de inicio de sesión. Verificá tu conexión a internet.', 'Reintentar');
+    setTimeout(()=>{ const b=document.getElementById('authBtn'); if(b) b.onclick=()=>location.reload(); }, 50);
+    return false;
+  }
+  _msal = new msal.PublicClientApplication({
+    auth: { clientId:MSAL_CONFIG.clientId, authority:MSAL_CONFIG.authority, redirectUri:MSAL_CONFIG.redirectUri },
+    cache: { cacheLocation:'localStorage' }
+  });
+  await _msal.initialize();
+  const accts = _msal.getAllAccounts();
+  if(accts.length>0){
+    _msal.setActiveAccount(accts[0]);
+    AUTH_USER = accts[0];
+    return true;
+  }
+  // No hay sesión: mostrar pantalla de login
+  authScreen('Ingresá con tu cuenta de Microsoft de la organización para acceder.', 'Iniciar sesión con Microsoft');
+  setTimeout(()=>{ const b=document.getElementById('authBtn'); if(b) b.onclick=doLogin; }, 50);
+  return false;
+}
+
 /* ================= START ================= */
 window.newQuote=newQuote; window.editQuote=editQuote; window.clientForm=clientForm;
 window.saveClient=saveClient; window.delClient=delClient; window.addCat=addCat; window.delCat=delCat;
 window.addItem=addItem; window.delItem=delItem; window.saveQuote=saveQuote; window.printQuote=printQuote;
 window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; window.dashSelect=dashSelect;
+window.doLogin=doLogin;
 
-// Arranque asíncrono: cargar desde Supabase, luego mostrar el panel
+// Arranque: 1) login Microsoft, 2) cargar Supabase, 3) mostrar panel
 (async function start(){
+  const ok = await initAuth();
+  if(!ok) return; // la pantalla de login ya se mostró
+  // Mostrar usuario y cablear logout
+  const lbl = document.getElementById('autosaveLbl');
+  if(lbl && AUTH_USER) lbl.textContent = AUTH_USER.name || AUTH_USER.username || 'Conectado';
+  const lo = document.getElementById('btnLogout');
+  if(lo) lo.onclick = async()=>{
+    try{ await _msal.logoutPopup({ mainWindowRedirectUri: MSAL_CONFIG.redirectUri }); }
+    catch(e){ location.reload(); }
+  };
   const c = document.getElementById('content');
   if(c) c.innerHTML = '<div class="empty">Cargando datos desde la nube…</div>';
   try{
