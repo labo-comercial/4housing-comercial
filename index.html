@@ -125,6 +125,11 @@ tr.ver-child.hide{display:none;}
 .prosp-contact svg{width:14px;height:14px;vertical-align:-2px;margin-right:4px;color:var(--muted);}
 .kpi-prosp .kpi-value.ok{color:#4f8a53;}
 .kpi-prosp .kpi-value.bad{color:#b0584f;}
+.kpi-prog-num{display:flex;align-items:baseline;gap:5px;margin:2px 0 9px;}
+.kpi-prog-val{font-size:27px;font-weight:700;line-height:1;}
+.kpi-prog-tgt{font-size:13px;color:var(--muted);font-weight:600;}
+.kpi-prog-bar{height:6px;background:#e7e4d8;border-radius:20px;overflow:hidden;}
+.kpi-prog-fill{height:100%;border-radius:20px;transition:width .3s;}
 /* chips de filtro oportunidades */
 .opp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
 .opp-filters select{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;}
@@ -160,7 +165,7 @@ tr.ver-child.hide{display:none;}
 /* forms */
 .field{margin-bottom:15px;display:flex;flex-direction:column;}
 .field label{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;margin-bottom:6px;}
-.field input,.field select,.field textarea{width:100%;border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px;font-size:14px;background:#fbfaf4;color:var(--ink);margin-top:auto;}
+.field input,.field select,.field textarea{width:100%;max-width:100%;min-width:0;border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px;font-size:14px;background:#fbfaf4;color:var(--ink);margin-top:auto;}
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);background:#fff;}
 .field textarea{resize:vertical;min-height:70px;}
 .inp{width:100%;border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px;font-size:14px;background:#fbfaf4;color:var(--ink);}
@@ -180,7 +185,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 .modal-h h3{margin:0;font-size:17px;font-weight:700;}
 .modal-h .x{background:none;border:none;font-size:22px;color:var(--muted);line-height:1;padding:2px 6px;}
 .modal-b{padding:22px;}
-.modal-f{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;}
+.modal-f{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
 
 .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
 .toolbar .search{flex:1;min-width:200px;position:relative;}
@@ -192,6 +197,8 @@ textarea.inp{resize:vertical;min-height:60px;}
 
 /* ===== COTIZADOR (preview area) ===== */
 .cotz-layout{display:grid;grid-template-columns:340px 1fr;gap:24px;align-items:start;}
+.cotz-form{min-width:0;}
+.cotz-form .field input,.cotz-form .field select{max-width:100%;}
 .cotz-form .card-b{max-height:none;}
 .prev-wrap{position:sticky;top:96px;}
 .prev-scale{transform-origin:top center;}
@@ -461,7 +468,12 @@ const STATES = [
 ];
 const stLabel = id => (STATES.find(s=>s.id===id)||STATES[0]).label;
 
-const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto'];
+const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto', 'Leandro Seoane'];
+// Helper: genera las <option> de un desplegable de comercial, marcando el actual
+function comercialOpts(sel){
+  return `<option value="">— Seleccionar —</option>` +
+    COMERCIALES.map(n=>`<option value="${esc(n)}" ${n===sel?'selected':''}>${esc(n)}</option>`).join('');
+}
 
 const SEED_CATALOG = [
   {id:uid(), name:'Alquiler Trailer Vivienda 6 mts.', price:800, unit:'mes'},
@@ -595,7 +607,8 @@ function rowToOpp(r){
     fechaLimite:r.fecha_limite||'', valor:r.valor_estimado!=null?Number(r.valor_estimado):null,
     moneda:r.moneda||'ARS', comercial:r.comercial_asignado||'',
     cotizacionId:r.cotizacion_id||'', notas:r.notas||'',
-    created:r.created_at?Date.parse(r.created_at):Date.now()
+    created:r.created_at?Date.parse(r.created_at):Date.now(),
+    updated:r.updated_at?Date.parse(r.updated_at):(r.created_at?Date.parse(r.created_at):Date.now())
   };
 }
 function oppToRow(o){
@@ -1284,7 +1297,7 @@ function oppFormBody(o){
       <div class="fld"><label>Prioridad</label><select id="oPrio" class="inp">${prioOpts}</select></div>
       <div class="fld"><label>Estado</label><select id="oState" class="inp">${estadoOpts}</select></div>
       <div class="fld"><label>Fecha límite</label><input id="oFecha" class="inp" type="date" value="${o.fechaLimite||''}"></div>
-      <div class="fld"><label>Comercial</label><input id="oComercial" class="inp" value="${esc(o.comercial||'')}" placeholder="Vendedor asignado"></div>
+      <div class="fld"><label>Comercial</label><select id="oComercial" class="inp">${comercialOpts(o.comercial)}</select></div>
       <div class="fld"><label>Valor estimado</label><input id="oValor" class="inp" type="number" value="${o.valor!=null?o.valor:''}" placeholder="0"></div>
       <div class="fld"><label>Moneda</label><select id="oMoneda" class="inp">${monedaOpts}</select></div>
     </div>
@@ -1352,7 +1365,7 @@ function addActModal(oppId){
      <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Descripción</label>
        <textarea id="aDesc" class="inp" rows="3" placeholder="Qué se hizo o se va a hacer"></textarea></div>
      <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Comercial</label>
-       <input id="aComercial" class="inp" placeholder="Quién la realiza"></div>`,
+       <select id="aComercial" class="inp">${comercialOpts('')}</select></div>`,
     `<button class="btn ghost" onclick="openOpp('${oppId}')">Volver</button>
      <button class="btn" onclick="saveAct('${oppId}')">Agregar</button>`);
 }
@@ -1425,14 +1438,16 @@ function startOfMonthTs(){ const d=new Date(); return new Date(d.getFullYear(),d
 function ventasKPIs(){
   const v = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
   const tm = startOfMonthTs();
-  const enProceso = v.filter(o=> o.state==='nuevo' || o.state==='en_proceso').length;
-  const cotizadas = v.filter(o=> o.state==='cotizada').length;
-  const ganadasMes = v.filter(o=> o.state==='ganada').length;
+  const enProceso = v.filter(o=> o.state==='nuevo' || o.state==='borrador').length;
+  const cotizadas = v.filter(o=> o.state==='enviada').length;           // a la espera de respuesta
+  const ganadasMes = v.filter(o=> o.state==='ganada' && (o.updated||o.created)>=tm).length;
+  // cotizadas en el mes: las que llegaron a estado cotizado o más avanzado este mes
+  const cotizadasMes = v.filter(o=> ['enviada','negociacion','ganada','perdida'].includes(o.state) && (o.updated||o.created)>=tm).length;
   const pipeline = v.filter(o=> o.state!=='perdida' && o.state!=='ganada')
                     .reduce((s,o)=> s + (o.valor||0), 0);
   const cerradas = v.filter(o=> o.state==='ganada' || o.state==='perdida').length;
   const conv = cerradas>0 ? Math.round(100*v.filter(o=>o.state==='ganada').length/cerradas) : 0;
-  return { total:v.length, enProceso, cotizadas, ganadasMes, pipeline, conv };
+  return { total:v.length, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, conv };
 }
 
 VIEWS.dashboard_ventas = function(){
@@ -1444,22 +1459,29 @@ VIEWS.dashboard_ventas = function(){
     <div class="kpi-sub">${sub||''}</div></div>`;
   C().innerHTML = `
     <div class="kpi-grid" style="margin-bottom:22px">
-      ${card('Oportunidades activas', k.enProceso, 'Nuevas y en proceso')}
-      ${card('Cotizadas', k.cotizadas, 'A la espera de respuesta')}
-      ${card('Ganadas (mes)', k.ganadasMes, 'Cerradas con éxito')}
+      ${kpiCard('Oportunidades activas', k.enProceso, 5, 'Nuevas y en proceso · obj. 5')}
+      ${kpiCard('Cotizadas a la espera', k.cotizadas, 20, 'Esperando respuesta · obj. 20')}
+      ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
+      ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2')}
+      ${kpiCard('Conversión', k.conv, 10, 'Ganadas / cerradas · obj. 10%', {pct:true})}
       ${card('Pipeline', (k.pipeline?('$ '+fmt(k.pipeline)):'—'), 'Valor estimado en juego')}
-      ${card('Conversión', k.conv+'%', 'Ganadas / cerradas')}
-      ${card('Total histórico', k.total, 'Todas las oportunidades de ventas')}
     </div>
-    <div class="card"><div class="card-b">
-      <div style="display:flex;justify-content:space-between;align-items:center">
+    <div class="card"><div class="card-b" style="padding:0">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
         <div>
-          <div style="font-size:15px;font-weight:700;color:#37432c">Pipeline de ventas</div>
-          <div class="help" style="margin-top:3px">Seguimiento completo de las oportunidades de la unidad Ventas</div>
+          <div style="font-size:15px;font-weight:700;color:#37432c">Oportunidades de ventas</div>
+          <div class="help" style="margin-top:3px">Seguimiento completo del pipeline de la unidad Ventas</div>
         </div>
-        <button class="btn" onclick="go('ventas')">Ver oportunidades →</button>
+        <button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
       </div>
+      ${(()=>{ const list = DB.opps.filter(o=> o.unidad==='ventas'||o.unidad==='ambas').sort((a,b)=>b.created-a.created);
+        return list.length ? `<table class="grid">
+          <thead><tr><th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th></tr></thead>
+          <tbody>${list.map(rowOpp).join('')}</tbody></table>`
+        : `<div class="empty" style="padding:40px">No hay oportunidades de ventas todavía. Se crean al convertir un prospecto, o con “Nueva oportunidad”.</div>`;
+      })()}
     </div></div>`;
+  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
 };
 
 /* ================= PROSPECCIÓN ================= */
@@ -1499,12 +1521,29 @@ function prospKPIs(){
   return { hoy, ayer, semana, enConv, convMes };
 }
 
-function kpiCard(label, value, target, sub){
+function kpiCard(label, value, target, sub, opts){
+  opts = opts || {};
+  const valStr = opts.pct ? value+'%' : value;
+  // Sin objetivo (target 0): tarjeta informativa, sin barra ni color
+  if(!target){
+    return `<div class="kpi kpi-prog" style="cursor:default">
+      <div class="kpi-label">${label}</div>
+      <div class="kpi-prog-num"><span class="kpi-prog-val" style="color:var(--ink)">${valStr}</span></div>
+      ${sub?`<div class="kpi-sub" style="margin-top:7px">${sub}</div>`:''}
+    </div>`;
+  }
   const ok = value>=target;
-  return `<div class="kpi kpi-prosp" style="cursor:default">
+  const color = ok ? '#639922' : '#e24b4a';
+  const pct = Math.min(100, Math.round(100*value/target));
+  const tgtStr = opts.pct ? target+'%' : target;
+  return `<div class="kpi kpi-prog" style="cursor:default">
     <div class="kpi-label">${label}</div>
-    <div class="kpi-value ${ok?'ok':'bad'}">${value}${target?`<span style="font-size:16px;color:var(--muted);font-weight:600"> / ${target}</span>`:''}</div>
-    <div class="kpi-sub">${sub||''}</div>
+    <div class="kpi-prog-num">
+      <span class="kpi-prog-val" style="color:${color}">${valStr}</span>
+      <span class="kpi-prog-tgt">/ ${tgtStr}</span>
+    </div>
+    <div class="kpi-prog-bar"><div class="kpi-prog-fill" style="width:${pct}%;background:${color}"></div></div>
+    ${sub?`<div class="kpi-sub" style="margin-top:7px">${sub}</div>`:''}
   </div>`;
 }
 
@@ -1723,7 +1762,7 @@ function addProspGestion(id){
   openModal('Registrar gestión',
     `<div class="fld"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Tipo</label><select id="gTipo" class="inp">${tipoOpts}</select></div>
      <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Descripción</label><textarea id="gDesc" class="inp" rows="3" placeholder="Qué se hizo o resultó"></textarea></div>
-     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Comercial</label><input id="gComercial" class="inp"></div>`,
+     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Comercial</label><select id="gComercial" class="inp">${comercialOpts('')}</select></div>`,
     `<button class="btn ghost" onclick="openProspecto('${id}')">Volver</button><button class="btn" onclick="saveProspGestion('${id}')">Agregar</button>`);
 }
 async function saveProspGestion(id){
