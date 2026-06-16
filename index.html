@@ -169,7 +169,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 .frow{display:grid;gap:14px;align-items:stretch;}
 .frow.c2{grid-template-columns:1fr 1fr;}
 .frow.c3{grid-template-columns:1fr 1fr 1fr;}
-.frow .field{margin-bottom:0;}
+.frow .field{margin-bottom:0;min-width:0;}
 .frow + .frow{margin-top:15px;}
 
 /* modal */
@@ -832,7 +832,7 @@ function rowQuoteDash(x, o){
       <td>${esc(x.attn||'—')}</td>
       <td>${esc(x.comercial||'—')}</td>
       <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
-      <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
+      <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
       <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
     </tr>`;
   }
@@ -847,7 +847,7 @@ function rowQuoteDash(x, o){
     <td>${esc(x.attn||'—')}</td>
     <td>${esc(x.comercial||'—')}</td>
     <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
-    <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
+    <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
     <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
   </tr>`;
 }
@@ -989,7 +989,7 @@ function rowQuote(x, o){
         <span class="badge st-${x.state}">${stLabel(x.state)}</span>
         <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
       </td>
-      <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
+      <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
       <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
       <td></td>
     </tr>`;
@@ -1010,7 +1010,7 @@ function rowQuote(x, o){
       <span class="badge st-${x.state}">${stLabel(x.state)}</span>
       <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
     </td>
-    <td class="r"><b>USD ${fmt(quoteTotal(x))}</b></td>
+    <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
     <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
     <td onclick="event.stopPropagation()" style="text-align:right;white-space:nowrap">
       <button class="btn sm ghost" title="Crear nueva versión (misma referencia)" onclick="newVersion('${x.id}')">${ICO.copy} Versión</button>
