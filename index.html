@@ -98,6 +98,27 @@ tr.ver-child.hide{display:none;}
 .st-negociacion{background:#fbf1e0;color:#b3853a;}
 .st-ganada{background:#e6f1e3;color:#4f8a53;}
 .st-perdida{background:#f6ebea;color:#b0584f;}
+/* prioridad oportunidades */
+.pr-urgente{background:#f6e6e4;color:#b0463c;}
+.pr-alta{background:#fbeede;color:#b3792a;}
+.pr-media{background:#eef0ea;color:#7d8a6e;}
+.pr-baja{background:#eef0f2;color:#8a9098;}
+/* estado oportunidades */
+.os-nuevo{background:#e7eef6;color:#4f7099;}
+.os-en_proceso{background:#fbf1e0;color:#b3853a;}
+.os-cotizada{background:#eceae1;color:#7c6f86;}
+.os-ganada{background:#e6f1e3;color:#4f8a53;}
+.os-perdida{background:#f6ebea;color:#b0584f;}
+/* chips de filtro oportunidades */
+.opp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
+.opp-filters select{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;}
+.opp-filters select:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);}
+.opp-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px;margin:6px 0 4px;}
+.opp-detail-grid .fld label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:4px;}
+.opp-detail-grid .fld .val{font-size:14px;color:#37432c;}
+.opp-act-item{padding:11px 0;border-bottom:1px solid var(--line);font-size:13px;}
+.opp-act-item:last-child{border-bottom:none;}
+.opp-act-item .meta{font-size:11px;color:var(--muted);margin-top:3px;}
 
 /* stats */
 .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:22px;}
@@ -126,6 +147,9 @@ tr.ver-child.hide{display:none;}
 .field input,.field select,.field textarea{width:100%;border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px;font-size:14px;background:#fbfaf4;color:var(--ink);margin-top:auto;}
 .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);background:#fff;}
 .field textarea{resize:vertical;min-height:70px;}
+.inp{width:100%;border:1px solid var(--line-strong);border-radius:9px;padding:10px 12px;font-size:14px;background:#fbfaf4;color:var(--ink);}
+.inp:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);background:#fff;}
+textarea.inp{resize:vertical;min-height:60px;}
 .frow{display:grid;gap:14px;align-items:stretch;}
 .frow.c2{grid-template-columns:1fr 1fr;}
 .frow.c3{grid-template-columns:1fr 1fr 1fr;}
@@ -331,6 +355,10 @@ tr.ver-child.hide{display:none;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
         Cotizaciones
       </button>
+      <button class="navbtn" data-view="opps">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l5-5 4 4 8-8"/><path d="M21 8v5M21 8h-5"/><path d="M3 21h18"/></svg>
+        Oportunidades
+      </button>
       <button class="navbtn" data-view="clients">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5"/><path d="M16 5.5a3 3 0 0 1 0 5.4M18 20c0-2.4-1-4-2.5-4.7"/></svg>
         Clientes
@@ -473,6 +501,15 @@ const SB = {
   // Incrementa atómicamente vía función RPC y devuelve el nuevo número
   nextSeq:     () => sbFetch('/rpc/next_seq', {method:'POST', body: JSON.stringify({})}),
   peekSeq:     () => sbFetch('/contador?select=seq&id=eq.1').then(r=> r[0]?r[0].seq:1),
+  // ---- Oportunidades ----
+  listOpps:    () => sbFetch('/oportunidades?select=*&order=created_at.desc'),
+  addOpp:      (o) => sbFetch('/oportunidades', {method:'POST', body: JSON.stringify(o)}).then(r=>r[0]),
+  updateOpp:   (id,o) => sbFetch('/oportunidades?id=eq.'+id, {method:'PATCH', body: JSON.stringify(o)}).then(r=>r[0]),
+  delOpp:      (id) => sbFetch('/oportunidades?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // ---- Actividades ----
+  listActs:    () => sbFetch('/actividades?select=*&order=fecha.desc'),
+  addAct:      (a) => sbFetch('/actividades', {method:'POST', body: JSON.stringify(a)}).then(r=>r[0]),
+  delAct:      (id) => sbFetch('/actividades?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
 };
 
 // ---- Mapeo entre el modelo interno (app) y las columnas de Supabase ----
@@ -513,21 +550,52 @@ function rowToClient(r){
 function catToRow(c){ return { nombre:c.name, precio:num(c.price), unidad:c.unit, orden:c.orden||0, zona:c.zona||null }; }
 function rowToCat(r){ return { id:r.id, name:r.nombre||'', price:Number(r.precio)||0, unit:r.unidad||'mes', orden:r.orden||0, zona:r.zona||'' }; }
 
+// ---- Oportunidades ----
+function rowToOpp(r){
+  return {
+    id:r.id, seq:r.seq, ref:r.ref||'', clientId:r.cliente_id||'',
+    unidad:r.unidad_negocio||'rental', tipo:r.tipo||'', title:r.titulo||'',
+    state:r.estado||'nuevo', prioridad:r.prioridad||'media',
+    fechaLimite:r.fecha_limite||'', valor:r.valor_estimado!=null?Number(r.valor_estimado):null,
+    moneda:r.moneda||'ARS', comercial:r.comercial_asignado||'',
+    cotizacionId:r.cotizacion_id||'', notas:r.notas||'',
+    created:r.created_at?Date.parse(r.created_at):Date.now()
+  };
+}
+function oppToRow(o){
+  return {
+    cliente_id:o.clientId||null, unidad_negocio:o.unidad||'rental', tipo:o.tipo||null,
+    titulo:o.title||null, estado:o.state||'nuevo', prioridad:o.prioridad||'media',
+    fecha_limite:o.fechaLimite||null, valor_estimado:(o.valor===''||o.valor==null)?null:num(o.valor),
+    moneda:o.moneda||'ARS', comercial_asignado:o.comercial||null, notas:o.notas||null
+  };
+}
+// ---- Actividades ----
+function rowToAct(r){
+  return {
+    id:r.id, ref:r.ref||'', oppId:r.oportunidad_id||'', clientId:r.cliente_id||'',
+    unidad:r.unidad_negocio||'rental', tipo:r.tipo||'nota', descripcion:r.descripcion||'',
+    comercial:r.comercial||'', fecha:r.fecha?Date.parse(r.fecha):Date.now()
+  };
+}
+
 // DB en memoria: las vistas lo leen igual que antes; se llena desde Supabase
-let DB = { clients:[], quotes:[], catalog:[], seq:1 };
+let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], seq:1 };
 let SB_READY = false;
 
 function uid(){ return Math.random().toString(36).slice(2,10); }
 
 // Recarga todo el estado desde Supabase hacia DB
 async function reloadDB(){
-  const [clients, catalog, quotes, seq] = await Promise.all([
-    SB.listClients(), SB.listCatalog(), SB.listQuotes(), SB.peekSeq()
+  const [clients, catalog, quotes, seq, opps, acts] = await Promise.all([
+    SB.listClients(), SB.listCatalog(), SB.listQuotes(), SB.peekSeq(), SB.listOpps(), SB.listActs()
   ]);
   DB.clients = clients.map(rowToClient);
   DB.catalog = catalog.map(rowToCat);
   DB.quotes  = quotes.map(rowToQuote);
   DB.seq     = seq || 1;
+  DB.opps    = opps.map(rowToOpp);
+  DB.acts    = acts.map(rowToAct);
   SB_READY = true;
 }
 
@@ -966,6 +1034,227 @@ async function delCat(id){
   catch(e){ toast('Error al eliminar: '+e.message); }
 }
 
+/* ================= OPORTUNIDADES ================= */
+const OPP_ESTADOS = ['nuevo','en_proceso','cotizada','ganada','perdida'];
+const OPP_ESTADO_LBL = { nuevo:'Nuevo', en_proceso:'En proceso', cotizada:'Cotizada', ganada:'Ganada', perdida:'Perdida' };
+const OPP_PRIOS = ['urgente','alta','media','baja'];
+const OPP_PRIO_LBL = { urgente:'Urgente', alta:'Alta', media:'Media', baja:'Baja' };
+const OPP_TIPOS = ['Licitación pública','Licitación privada','Pedido de cotización','Notificación de proceso','Consulta','Otro'];
+let oppFilters = { unidad:'', estado:'', prioridad:'' };
+
+function oppClientName(o){
+  if(o.clientId){ const c=DB.clients.find(x=>x.id===o.clientId); if(c) return c.name; }
+  return '—';
+}
+function fmtFecha(iso){ return iso ? isoToText(iso) : '—'; }
+
+VIEWS.opps = function(){
+  setHeader('Oportunidades','Pipeline comercial',
+    `<button class="btn" onclick="newOpp()">${ICO.plus} Nueva oportunidad</button>`);
+
+  let list = [...DB.opps];
+  if(oppFilters.unidad)    list = list.filter(o=>o.unidad===oppFilters.unidad);
+  if(oppFilters.estado)    list = list.filter(o=>o.state===oppFilters.estado);
+  if(oppFilters.prioridad) list = list.filter(o=>o.prioridad===oppFilters.prioridad);
+
+  const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
+
+  C().innerHTML = `
+    <div class="opp-filters">
+      <select id="fUnidad">
+        <option value="">Todas las unidades</option>
+        ${optSel(oppFilters.unidad, [['rental','Rental'],['ventas','Ventas']])}
+      </select>
+      <select id="fEstado">
+        <option value="">Todos los estados</option>
+        ${optSel(oppFilters.estado, OPP_ESTADOS.map(s=>[s,OPP_ESTADO_LBL[s]]))}
+      </select>
+      <select id="fPrio">
+        <option value="">Todas las prioridades</option>
+        ${optSel(oppFilters.prioridad, OPP_PRIOS.map(p=>[p,OPP_PRIO_LBL[p]]))}
+      </select>
+      <span class="help" style="margin-left:auto">${list.length} oportunidad${list.length===1?'':'es'}</span>
+    </div>
+    <div class="card"><div class="card-b" style="padding:0">
+      ${list.length ? `<table class="grid">
+        <thead><tr>
+          <th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th>
+          <th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th>
+        </tr></thead>
+        <tbody>${list.map(rowOpp).join('')}</tbody></table>`
+      : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.estado||oppFilters.prioridad?' con estos filtros':''}. Llegan automáticamente desde los mails, o podés crear una con “Nueva oportunidad”.</div>`}
+    </div></div>`;
+
+  document.getElementById('fUnidad').onchange=e=>{ oppFilters.unidad=e.target.value; VIEWS.opps(); };
+  document.getElementById('fEstado').onchange=e=>{ oppFilters.estado=e.target.value; VIEWS.opps(); };
+  document.getElementById('fPrio').onchange=e=>{ oppFilters.prioridad=e.target.value; VIEWS.opps(); };
+  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
+};
+
+function rowOpp(o){
+  const unidadTag = o.unidad==='ventas' ? '<span class="help" style="font-size:10px"> · Ventas</span>' : '';
+  const valor = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
+  return `<tr class="clickable" data-id="${o.id}">
+    <td><strong>${esc(o.ref||'—')}</strong>${unidadTag}</td>
+    <td>${esc(oppClientName(o))}</td>
+    <td>${esc(o.tipo||'—')}</td>
+    <td><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></td>
+    <td><span class="badge os-${o.state}">${OPP_ESTADO_LBL[o.state]||o.state}</span></td>
+    <td>${fmtFecha(o.fechaLimite)}</td>
+    <td class="r">${valor}</td>
+  </tr>`;
+}
+
+function openOpp(id){
+  const o = DB.opps.find(x=>x.id===id); if(!o) return;
+  const acts = DB.acts.filter(a=>a.oppId===id).sort((a,b)=>b.fecha-a.fecha);
+  const valor = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
+  const estadoSel = OPP_ESTADOS.map(s=>`<option value="${s}" ${s===o.state?'selected':''}>${OPP_ESTADO_LBL[s]}</option>`).join('');
+
+  const body = `
+    <div class="opp-detail-grid">
+      <div class="fld"><label>Cliente / Organismo</label><div class="val">${esc(oppClientName(o))}</div></div>
+      <div class="fld"><label>Tipo</label><div class="val">${esc(o.tipo||'—')}</div></div>
+      <div class="fld"><label>Prioridad</label><div class="val"><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></div></div>
+      <div class="fld"><label>Unidad</label><div class="val">${o.unidad==='ventas'?'Ventas':'Rental'}</div></div>
+      <div class="fld"><label>Fecha límite</label><div class="val">${fmtFecha(o.fechaLimite)}</div></div>
+      <div class="fld"><label>Valor estimado</label><div class="val">${valor}</div></div>
+      <div class="fld"><label>Comercial</label><div class="val">${esc(o.comercial||'—')}</div></div>
+      <div class="fld"><label>Estado</label>
+        <select id="oppState" class="state-sel" style="max-width:none">${estadoSel}</select>
+      </div>
+    </div>
+    ${o.notas?`<div class="fld" style="margin-top:6px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Resumen / Notas</label><div style="font-size:13.5px;color:#37432c;margin-top:4px">${esc(o.notas)}</div></div>`:''}
+    <div style="margin-top:18px">
+      <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Gestiones / Actividades (${acts.length})</label>
+      <div style="margin-top:6px">
+        ${acts.length ? acts.map(a=>`
+          <div class="opp-act-item">
+            <div>${esc(a.descripcion||a.tipo)}</div>
+            <div class="meta">${esc(a.ref?a.ref+' · ':'')}${esc(a.tipo)} · ${new Date(a.fecha).toLocaleDateString('es-AR')}${a.comercial?' · '+esc(a.comercial):''}</div>
+          </div>`).join('')
+        : '<div class="help">Sin gestiones registradas todavía.</div>'}
+      </div>
+    </div>`;
+
+  const foot = `
+    <button class="btn ghost" onclick="closeModal()">Cerrar</button>
+    <button class="btn ghost" onclick="editOpp('${o.id}')">Editar</button>
+    <button class="btn ghost" style="color:#b0584f" onclick="delOpp('${o.id}')">Eliminar</button>
+    <button class="btn" onclick="addActModal('${o.id}')">${ICO.plus} Gestión</button>`;
+
+  openModal(o.ref || 'Oportunidad', body, foot);
+  // cambio de estado en caliente
+  const sel = document.getElementById('oppState');
+  if(sel) sel.onchange = async()=>{
+    try{ await SB.updateOpp(o.id, { estado: sel.value }); o.state=sel.value; toast('Estado actualizado'); VIEWS.opps(); }
+    catch(e){ toast('Error: '+e.message); }
+  };
+}
+
+function oppFormBody(o){
+  const cliOpts = `<option value="">— sin cliente —</option>` +
+    [...DB.clients].sort((a,b)=>a.name.localeCompare(b.name))
+      .map(c=>`<option value="${c.id}" ${c.id===o.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
+  const tipoOpts = OPP_TIPOS.map(t=>`<option value="${t}" ${t===o.tipo?'selected':''}>${t}</option>`).join('');
+  const prioOpts = OPP_PRIOS.map(p=>`<option value="${p}" ${p===o.prioridad?'selected':''}>${OPP_PRIO_LBL[p]}</option>`).join('');
+  const estadoOpts = OPP_ESTADOS.map(s=>`<option value="${s}" ${s===o.state?'selected':''}>${OPP_ESTADO_LBL[s]}</option>`).join('');
+  const unidadOpts = [['rental','Rental'],['ventas','Ventas']].map(([v,l])=>`<option value="${v}" ${v===o.unidad?'selected':''}>${l}</option>`).join('');
+  const monedaOpts = [['ARS','ARS'],['USD','USD']].map(([v,l])=>`<option value="${v}" ${v===o.moneda?'selected':''}>${l}</option>`).join('');
+  return `
+    <div class="opp-detail-grid">
+      <div class="fld"><label>Título</label><input id="oTitle" class="inp" value="${esc(o.title||'')}" placeholder="Asunto / referencia"></div>
+      <div class="fld"><label>Cliente / Organismo</label><select id="oClient" class="inp">${cliOpts}</select></div>
+      <div class="fld"><label>Tipo</label><select id="oTipo" class="inp">${tipoOpts}</select></div>
+      <div class="fld"><label>Unidad</label><select id="oUnidad" class="inp">${unidadOpts}</select></div>
+      <div class="fld"><label>Prioridad</label><select id="oPrio" class="inp">${prioOpts}</select></div>
+      <div class="fld"><label>Estado</label><select id="oState" class="inp">${estadoOpts}</select></div>
+      <div class="fld"><label>Fecha límite</label><input id="oFecha" class="inp" type="date" value="${o.fechaLimite||''}"></div>
+      <div class="fld"><label>Comercial</label><input id="oComercial" class="inp" value="${esc(o.comercial||'')}" placeholder="Vendedor asignado"></div>
+      <div class="fld"><label>Valor estimado</label><input id="oValor" class="inp" type="number" value="${o.valor!=null?o.valor:''}" placeholder="0"></div>
+      <div class="fld"><label>Moneda</label><select id="oMoneda" class="inp">${monedaOpts}</select></div>
+    </div>
+    <div class="fld" style="margin-top:12px"><label>Notas / Resumen</label><textarea id="oNotas" class="inp" rows="3">${esc(o.notas||'')}</textarea></div>`;
+}
+
+function readOppForm(){
+  return {
+    title: document.getElementById('oTitle').value.trim(),
+    clientId: document.getElementById('oClient').value,
+    tipo: document.getElementById('oTipo').value,
+    unidad: document.getElementById('oUnidad').value,
+    prioridad: document.getElementById('oPrio').value,
+    state: document.getElementById('oState').value,
+    fechaLimite: document.getElementById('oFecha').value,
+    comercial: document.getElementById('oComercial').value.trim(),
+    valor: document.getElementById('oValor').value,
+    moneda: document.getElementById('oMoneda').value,
+    notas: document.getElementById('oNotas').value.trim()
+  };
+}
+
+function newOpp(){
+  const o = { id:null, clientId:'', unidad:'rental', tipo:'Pedido de cotización', title:'',
+    state:'nuevo', prioridad:'media', fechaLimite:'', valor:null, moneda:'ARS', comercial:'', notas:'' };
+  openModal('Nueva oportunidad', oppFormBody(o),
+    `<button class="btn ghost" onclick="closeModal()">Cancelar</button>
+     <button class="btn" onclick="saveNewOpp()">Crear</button>`);
+}
+async function saveNewOpp(){
+  try{
+    const f = readOppForm();
+    await SB.addOpp(oppToRow(f));
+    await reloadDB(); closeModal(); toast('Oportunidad creada'); VIEWS.opps();
+  }catch(e){ toast('Error al crear: '+e.message); }
+}
+
+function editOpp(id){
+  const o = DB.opps.find(x=>x.id===id); if(!o) return;
+  openModal(o.ref||'Editar oportunidad', oppFormBody(o),
+    `<button class="btn ghost" onclick="openOpp('${id}')">Volver</button>
+     <button class="btn" onclick="saveEditOpp('${id}')">Guardar</button>`);
+}
+async function saveEditOpp(id){
+  try{
+    const f = readOppForm();
+    await SB.updateOpp(id, oppToRow(f));
+    await reloadDB(); closeModal(); toast('Oportunidad actualizada'); VIEWS.opps();
+  }catch(e){ toast('Error al guardar: '+e.message); }
+}
+async function delOpp(id){
+  if(!confirm('¿Eliminar esta oportunidad? Esta acción no se puede deshacer.')) return;
+  try{
+    await SB.delOpp(id);
+    await reloadDB(); closeModal(); toast('Oportunidad eliminada'); VIEWS.opps();
+  }catch(e){ toast('Error al eliminar: '+e.message); }
+}
+
+function addActModal(oppId){
+  const o = DB.opps.find(x=>x.id===oppId); if(!o) return;
+  const tipoOpts = ['llamada','visita','nota','tarea','mail'].map(t=>`<option value="${t}">${t}</option>`).join('');
+  openModal('Nueva gestión',
+    `<div class="fld"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Tipo</label>
+       <select id="aTipo" class="inp">${tipoOpts}</select></div>
+     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Descripción</label>
+       <textarea id="aDesc" class="inp" rows="3" placeholder="Qué se hizo o se va a hacer"></textarea></div>
+     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Comercial</label>
+       <input id="aComercial" class="inp" placeholder="Quién la realiza"></div>`,
+    `<button class="btn ghost" onclick="openOpp('${oppId}')">Volver</button>
+     <button class="btn" onclick="saveAct('${oppId}')">Agregar</button>`);
+}
+async function saveAct(oppId){
+  const o = DB.opps.find(x=>x.id===oppId); if(!o) return;
+  try{
+    await SB.addAct({
+      oportunidad_id: oppId, cliente_id: o.clientId||null, unidad_negocio: o.unidad||'rental',
+      tipo: document.getElementById('aTipo').value,
+      descripcion: document.getElementById('aDesc').value.trim(),
+      comercial: document.getElementById('aComercial').value.trim()||null
+    });
+    await reloadDB(); toast('Gestión agregada'); openOpp(oppId);
+  }catch(e){ toast('Error: '+e.message); }
+}
+
 /* ================= QUOTE EDITOR ================= */
 let CUR=null; // working quote
 function newQuote(clientId){
@@ -1376,6 +1665,8 @@ window.saveClient=saveClient; window.delClient=delClient; window.addCat=addCat; 
 window.addItem=addItem; window.delItem=delItem; window.saveQuote=saveQuote; window.printQuote=printQuote;
 window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; window.dashSelect=dashSelect;
 window.doLogin=doLogin;
+window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; window.editOpp=editOpp;
+window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActModal; window.saveAct=saveAct;
 
 // Arranque: 1) login Microsoft, 2) cargar Supabase, 3) mostrar panel
 (async function start(){
