@@ -130,10 +130,14 @@ tr.ver-child.hide{display:none;}
 .kpi-prog-tgt{font-size:13px;color:var(--muted);font-weight:600;}
 .kpi-prog-bar{height:6px;background:#e7e4d8;border-radius:20px;overflow:hidden;}
 .kpi-prog-fill{height:100%;border-radius:20px;transition:width .3s;}
+.kpi-prog{transition:box-shadow .15s,border-color .15s;}
+.kpi-active{box-shadow:0 0 0 2px var(--olive);}
 /* chips de filtro oportunidades */
 .opp-filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
 .opp-filters select{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;}
 .opp-filters select:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);}
+.vend-filter{border:1px solid var(--line-strong);border-radius:8px;padding:7px 10px;font-size:12.5px;background:#fff;color:#6f6c60;font-weight:600;cursor:pointer;}
+.vend-filter:focus{outline:none;border-color:var(--olive);box-shadow:0 0 0 3px rgba(124,138,87,.18);}
 .opp-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px 22px;margin:6px 0 4px;}
 .opp-detail-grid .fld label{font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:4px;}
 .opp-detail-grid .fld .val{font-size:14px;color:#37432c;}
@@ -473,6 +477,14 @@ const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo S
 function comercialOpts(sel){
   return `<option value="">— Seleccionar —</option>` +
     COMERCIALES.map(n=>`<option value="${esc(n)}" ${n===sel?'selected':''}>${esc(n)}</option>`).join('');
+}
+// Filtro global por vendedor (se conserva entre vistas). '' = todos.
+let filtroVendedor = '';
+function vendedorFilterSelect(id){
+  return `<select id="${id}" class="vend-filter">
+    <option value="">Todos los vendedores</option>
+    ${COMERCIALES.map(n=>`<option value="${esc(n)}" ${n===filtroVendedor?'selected':''}>${esc(n)}</option>`).join('')}
+  </select>`;
 }
 
 const SEED_CATALOG = [
@@ -910,12 +922,17 @@ VIEWS.quotes = function(){
     list=list.filter(x=>(x.client+' '+x.ref+' '+(x.attn||'')).toLowerCase().includes(q));
     opps=opps.filter(o=>(oppClientName(o)+' '+(o.ref||'')+' '+(o.title||'')).toLowerCase().includes(q));
   }
+  if(filtroVendedor){
+    list=list.filter(x=>x.comercial===filtroVendedor);
+    opps=opps.filter(o=>o.comercial===filtroVendedor);
+  }
   const groups = groupQuotes(list);
   const hayAlgo = groups.length || opps.length;
 
   C().innerHTML = `
     <div class="toolbar">
       <div class="search">${ICO.search}<input id="qSearch" placeholder="Buscar por cliente o referencia…" value="${esc(quoteSearch)}"></div>
+      ${vendedorFilterSelect('qVend')}
       <div class="filterpills">
         <button class="pill ${quoteFilter==='all'?'active':''}" data-f="all">Todas</button>
         ${STATES.map(s=>`<button class="pill ${quoteFilter===s.id?'active':''}" data-f="${s.id}">${s.label}</button>`).join('')}
@@ -930,6 +947,7 @@ VIEWS.quotes = function(){
   const s=document.getElementById('qSearch');
   s.oninput=()=>{ quoteSearch=s.value; const p=s.selectionStart; VIEWS.quotes(); const n=document.getElementById('qSearch'); n.focus(); n.setSelectionRange(p,p); };
   document.querySelectorAll('.pill').forEach(p=>p.onclick=()=>{ quoteFilter=p.dataset.f; VIEWS.quotes(); });
+  { const v=document.getElementById('qVend'); if(v) v.onchange=()=>{ filtroVendedor=v.value; VIEWS.quotes(); }; }
   document.querySelectorAll('.state-sel').forEach(sel=>{
     if(sel.classList.contains('opp-state-sel')){
       sel.onchange=async e=>{ e.stopPropagation();
@@ -986,6 +1004,12 @@ function toggleGroup(key){
   if(mainTr) mainTr.classList.toggle('open');
 }
 
+// Devuelve el ref (OP-...) de la oportunidad que originó esta cotización, o ''
+function oppOrigenRef(quoteId){
+  const o = DB.opps.find(x=> x.cotizacionId === quoteId);
+  return o ? (o.ref||'') : '';
+}
+
 function rowQuote(x, o){
   o = o || {};
   const opts = STATES.map(s=>`<option value="${s.id}" ${s.id===x.state?'selected':''}>${s.label}</option>`).join('');
@@ -1009,11 +1033,13 @@ function rowQuote(x, o){
   }
 
   // ----- Fila principal -----
+  const origen = oppOrigenRef(x.id);
+  const origenTag = origen ? `<div class="help" style="font-size:10px;margin-top:2px">desde ${esc(origen)}</div>` : '';
   const refCell = o.multi
     ? `<span class="ver-toggle" onclick="event.stopPropagation();toggleGroup('${o.groupKey}')" title="Ver versiones">
          ${ICO.chev}<b>${esc(refBase(x))}</b><span class="ver-count">${o.count}</span>
-       </span>`
-    : `<b>${esc(x.ref)}</b>`;
+       </span>${origenTag}`
+    : `<b>${esc(x.ref)}</b>${origenTag}`;
   return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
     <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
     <td>${esc(x.client||'—')}</td>
@@ -1391,6 +1417,7 @@ VIEWS.ventas = function(){
 
   let list = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
   if(ventasFiltroEstado) list = list.filter(o=>o.state===ventasFiltroEstado);
+  if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
   list.sort((a,b)=> b.created - a.created);
 
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
@@ -1401,6 +1428,7 @@ VIEWS.ventas = function(){
         <option value="">Todos los estados</option>
         ${optSel(ventasFiltroEstado, OPP_ESTADOS.map(s=>[s,OPP_ESTADO_LBL[s]]))}
       </select>
+      ${vendedorFilterSelect('vVend')}
       <span class="help" style="margin-left:auto">${list.length} ${list.length===1?'registro':'registros'}</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
@@ -1414,6 +1442,7 @@ VIEWS.ventas = function(){
     </div></div>`;
 
   document.getElementById('vEstado').onchange=e=>{ ventasFiltroEstado=e.target.value; VIEWS.ventas(); };
+  { const v=document.getElementById('vVend'); if(v) v.onchange=()=>{ filtroVendedor=v.value; VIEWS.ventas(); }; }
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
 };
 
@@ -1450,6 +1479,8 @@ function ventasKPIs(){
   return { total:v.length, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, conv };
 }
 
+let ventasPanelFiltro = ''; // '' | 'activas' | 'enviada' | 'ganada'
+
 VIEWS.dashboard_ventas = function(){
   setHeader('Ventas','Indicadores comerciales');
   const k = ventasKPIs();
@@ -1457,32 +1488,44 @@ VIEWS.dashboard_ventas = function(){
     <div class="kpi-label">${label}</div>
     <div class="kpi-value">${value}</div>
     <div class="kpi-sub">${sub||''}</div></div>`;
+  const f = ventasPanelFiltro;
+  // lista de abajo, filtrada según el KPI activo
+  let list = DB.opps.filter(o=> o.unidad==='ventas'||o.unidad==='ambas');
+  if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
+  if(f==='activas')  list = list.filter(o=> o.state==='nuevo'||o.state==='borrador');
+  else if(f==='enviada') list = list.filter(o=> o.state==='enviada');
+  else if(f==='ganada')  list = list.filter(o=> o.state==='ganada');
+  list = list.sort((a,b)=>b.created-a.created);
+
   C().innerHTML = `
     <div class="kpi-grid" style="margin-bottom:22px">
-      ${kpiCard('Oportunidades activas', k.enProceso, 5, 'Nuevas y en proceso · obj. 5')}
-      ${kpiCard('Cotizadas a la espera', k.cotizadas, 20, 'Esperando respuesta · obj. 20')}
+      ${kpiCard('Oportunidades activas', k.enProceso, 5, 'Nuevas y en proceso · obj. 5', {onclick:"toggleVentasFiltro('activas')", active:f==='activas'})}
+      ${kpiCard('Cotizadas a la espera', k.cotizadas, 20, 'Esperando respuesta · obj. 20', {onclick:"toggleVentasFiltro('enviada')", active:f==='enviada'})}
       ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
-      ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2')}
+      ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2', {onclick:"toggleVentasFiltro('ganada')", active:f==='ganada'})}
       ${kpiCard('Conversión', k.conv, 10, 'Ganadas / cerradas · obj. 10%', {pct:true})}
       ${card('Pipeline', (k.pipeline?('$ '+fmt(k.pipeline)):'—'), 'Valor estimado en juego')}
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
         <div>
-          <div style="font-size:15px;font-weight:700;color:#37432c">Oportunidades de ventas</div>
-          <div class="help" style="margin-top:3px">Seguimiento completo del pipeline de la unidad Ventas</div>
+          <div style="font-size:15px;font-weight:700;color:#37432c">Oportunidades de ventas${f?' · filtradas':''}</div>
+          <div class="help" style="margin-top:3px">${f?'Tocá de nuevo el indicador para quitar el filtro':'Seguimiento completo del pipeline de la unidad Ventas'}</div>
         </div>
         <button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
       </div>
-      ${(()=>{ const list = DB.opps.filter(o=> o.unidad==='ventas'||o.unidad==='ambas').sort((a,b)=>b.created-a.created);
-        return list.length ? `<table class="grid">
+      ${list.length ? `<table class="grid">
           <thead><tr><th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th></tr></thead>
           <tbody>${list.map(rowOpp).join('')}</tbody></table>`
-        : `<div class="empty" style="padding:40px">No hay oportunidades de ventas todavía. Se crean al convertir un prospecto, o con “Nueva oportunidad”.</div>`;
-      })()}
+        : `<div class="empty" style="padding:40px">No hay oportunidades${f?' con este filtro':' de ventas todavía'}.</div>`}
     </div></div>`;
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
 };
+
+function toggleVentasFiltro(f){
+  ventasPanelFiltro = (ventasPanelFiltro===f) ? '' : f;
+  VIEWS.dashboard_ventas();
+}
 
 /* ================= PROSPECCIÓN ================= */
 const PROSP_ESTADOS = ['sin_contactar','contactado','en_conversacion','calificado','descartado'];
@@ -1524,9 +1567,11 @@ function prospKPIs(){
 function kpiCard(label, value, target, sub, opts){
   opts = opts || {};
   const valStr = opts.pct ? value+'%' : value;
+  const clickable = opts.onclick ? `onclick="${opts.onclick}" style="cursor:pointer"` : 'style="cursor:default"';
+  const activeCls = opts.active ? ' kpi-active' : '';
   // Sin objetivo (target 0): tarjeta informativa, sin barra ni color
   if(!target){
-    return `<div class="kpi kpi-prog" style="cursor:default">
+    return `<div class="kpi kpi-prog${activeCls}" ${clickable}>
       <div class="kpi-label">${label}</div>
       <div class="kpi-prog-num"><span class="kpi-prog-val" style="color:var(--ink)">${valStr}</span></div>
       ${sub?`<div class="kpi-sub" style="margin-top:7px">${sub}</div>`:''}
@@ -1536,7 +1581,7 @@ function kpiCard(label, value, target, sub, opts){
   const color = ok ? '#639922' : '#e24b4a';
   const pct = Math.min(100, Math.round(100*value/target));
   const tgtStr = opts.pct ? target+'%' : target;
-  return `<div class="kpi kpi-prog" style="cursor:default">
+  return `<div class="kpi kpi-prog${activeCls}" ${clickable}>
     <div class="kpi-label">${label}</div>
     <div class="kpi-prog-num">
       <span class="kpi-prog-val" style="color:${color}">${valStr}</span>
@@ -2249,6 +2294,7 @@ window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActM
 window.newProspecto=newProspecto; window.saveNewProspecto=saveNewProspecto; window.openProspecto=openProspecto;
 window.newOppVentas=newOppVentas; window.saveNewOppFrom=saveNewOppFrom; window.newOppRental=newOppRental;
 window.cotizarOportunidad=cotizarOportunidad; window.abrirCotizacionDeOpp=abrirCotizacionDeOpp;
+window.toggleVentasFiltro=toggleVentasFiltro;
 window.editProspecto=editProspecto; window.saveEditProspecto=saveEditProspecto; window.backToEmpresas=backToEmpresas;
 window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion; window.convertirProspecto=convertirProspecto;
 
