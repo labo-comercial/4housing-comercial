@@ -335,9 +335,11 @@ textarea.inp{resize:vertical;min-height:60px;}
   .app{flex-direction:column;}
   .side{width:100%;height:auto;position:static;flex-direction:row;flex-wrap:wrap;align-items:center;padding:12px 14px;gap:8px;}
   .side .brand{margin-bottom:0;margin-right:auto;}
-  .side nav{flex-direction:row;flex-wrap:wrap;gap:4px;width:100%;order:3;}
-  .navbtn{flex:1;min-width:0;justify-content:center;padding:9px 8px;font-size:12.5px;}
-  .navbtn span,.navbtn{white-space:nowrap;}
+  .side nav{flex-direction:row;flex-wrap:wrap;gap:6px 5px;width:100%;order:3;}
+  /* cada etiqueta de unidad ocupa la fila completa y fuerza salto de línea */
+  .nav-group-lbl{flex:0 0 100%;width:100%;padding:8px 4px 2px;font-size:10px;}
+  .nav-group-lbl:first-child{padding-top:0;}
+  .navbtn{flex:1 1 0;min-width:0;justify-content:center;padding:9px 8px;font-size:12.5px;white-space:nowrap;}
   .side .sp{display:none;}
   .side .data-actions{flex-direction:row;flex-wrap:wrap;border-top:none;padding-top:0;width:100%;order:4;gap:6px;}
   .side .data-actions .lbl{display:none;}
@@ -363,7 +365,9 @@ textarea.inp{resize:vertical;min-height:60px;}
 }
 @media(max-width:420px){
   .kpi-grid{grid-template-columns:1fr;}
-  .navbtn{font-size:11.5px;padding:8px 5px;}
+  .navbtn{font-size:11.5px;padding:8px 6px;gap:6px;}
+  /* sin íconos en pantallas muy chicas: el texto manda */
+  .navbtn svg{display:none;}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
