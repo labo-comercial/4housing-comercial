@@ -1270,6 +1270,7 @@ async function setQuoteState(id, state){
     await SB.updateQuote(id, {estado:state, updated_at:new Date().toISOString()});
     q.state = state;
     toast('Estado actualizado: '+stLabel(state));
+    if(state==='ganada'){ await reloadDB(); await crearCobranzaDesdeQuote(id); }
     VIEWS.quotes();
   }catch(e){ toast('Error: '+e.message); }
 }
@@ -1873,7 +1874,42 @@ async function crearCobranzaDesdeOpp(oppId){
   }catch(e){ /* si la tabla no existe aún, no rompe el flujo */ console.warn('Cobranza:', e.message); }
 }
 
-// Envía el aviso de nueva cobranza a Facturación: Teams (webhook firmado, directo)
+// Al marcar una COTIZACIÓN de rental como ganada: crear la cobranza desde la cotización.
+// Evita duplicar si ya hay cobranza para esta cotización o para su oportunidad vinculada.
+async function crearCobranzaDesdeQuote(quoteId){
+  try{
+    const q = DB.quotes.find(x=>x.id===quoteId); if(!q) return;
+    const cli = q.clientId ? DB.clients.find(c=>c.id===q.clientId) : null;
+    // Oportunidad vinculada (si esta cotización nació de una)
+    const opp = DB.opps.find(o=>o.cotizacionId===quoteId);
+    // Dedup: ya existe cobranza para esta cotización (por su opp) o registrada con su ref
+    const yaExiste = (opp && DB.cobranzas.some(c=>c.oppId===opp.id))
+                   || DB.cobranzas.some(c=> c.ref===q.ref);
+    const montoBase = quoteTotal(q);
+    const moneda    = q.currency||'USD';
+    const formaPago = q.pago ? [{concepto:q.pago, monto:null}] : [];
+    if(!yaExiste){
+      await SB.addCobranza(cobranzaToRow({
+        ref: q.ref||'', oppId: opp?opp.id:'', clientId: q.clientId||'',
+        razonSocial: cli ? cli.name : (q.client||''),
+        cuit: cli ? (cli.cuit||'') : '',
+        montoBase, moneda, formaPago, estado:'pendiente',
+        notas: 'Generada al ganar la cotización de Rental.'
+      }));
+      toast('Venta enviada a Cobranzas');
+    }
+    notificarCobranza({
+      ref: q.ref||'',
+      razon_social: cli ? cli.name : (q.client||''),
+      cuit: cli ? (cli.cuit||'') : '',
+      monto_total: montoBase,
+      moneda,
+      forma_pago: q.pago || '(a completar por Facturación)',
+      comercial: q.comercial||'',
+      unidad: 'rental'
+    });
+  }catch(e){ console.warn('Cobranza (quote):', e.message); }
+}
 // y mail (vía Edge Function notificar-cobranza). Silencioso: nunca interrumpe el flujo de la app.
 async function notificarCobranza(payload){
   const sym = (payload.moneda==='ARS') ? '$' : 'USD';
@@ -3152,6 +3188,7 @@ async function saveQuote(opts){
       await SB.updateQuote(CUR.id, quoteToRow(CUR));
       await reloadDB();
     }
+    if(CUR.state==='ganada' && CUR.id){ await reloadDB(); await crearCobranzaDesdeQuote(CUR.id); }
     if(!opts.silent){ toast('Cotización guardada'); go('quotes'); }
   }catch(e){ toast('Error al guardar: '+e.message); throw e; }
 }
