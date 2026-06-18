@@ -117,6 +117,16 @@ tr.ver-child.hide{display:none;}
 .os-negociacion{background:#fbf1e0;color:#b3853a;}
 .os-ganada{background:#e6f1e3;color:#4f8a53;}
 .os-perdida{background:#f6ebea;color:#b0584f;}
+.os-desestimada{background:#ededed;color:#9a9a9a;text-decoration:line-through;}
+.alta-sin_iniciar{background:#f1efe9;color:#9a9080;}
+.alta-en_tramite{background:#fbf1e0;color:#b3853a;}
+.alta-dado_alta{background:#e6f1e3;color:#4f8a53;}
+.qc-chart{display:flex;flex-direction:column;gap:9px;}
+.qc-row{display:grid;grid-template-columns:130px 1fr 34px;align-items:center;gap:10px;}
+.qc-name{font-size:12.5px;color:#37432c;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.qc-track{background:#eef0ea;border-radius:6px;height:14px;overflow:hidden;}
+.qc-fill{height:100%;background:linear-gradient(90deg,#9db98b,#5f7a4e);border-radius:6px;min-width:2px;}
+.qc-val{font-size:12.5px;font-weight:700;color:#5f7a4e;text-align:right;}
 /* estado prospectos */
 .ps-sin_contactar{background:#eef0f2;color:#8a9098;}
 .ps-contactado{background:#e7eef6;color:#4f7099;}
@@ -489,7 +499,10 @@ const STATES = [
 ];
 const stLabel = id => (STATES.find(s=>s.id===id)||STATES[0]).label;
 
-const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto', 'Leandro Seoane'];
+const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto', 'Leandro Seoane', 'Héctor Bermúdez'];
+// Estado de alta como proveedor en plataformas de contratación de cada cliente
+const ALTA_ESTADOS = ['sin_iniciar','en_tramite','dado_alta'];
+const ALTA_LBL = { sin_iniciar:'Sin iniciar', en_tramite:'En trámite', dado_alta:'Dado de alta' };
 // Helper: genera las <option> de un desplegable de comercial, marcando el actual
 function comercialOpts(sel){
   return `<option value="">— Seleccionar —</option>` +
@@ -621,14 +634,14 @@ function rowToQuote(r){
 function clientToRow(c){
   return {
     nombre:c.name, atencion:c.attn, email:c.email, telefono:c.phone, notas:c.notes,
-    cuit:c.cuit||null, portal:c.portal||null,
+    cuit:c.cuit||null, portal:c.portal||null, alta_estado:c.altaEstado||'sin_iniciar',
     contactos: Array.isArray(c.contactos) ? c.contactos : []
   };
 }
 function rowToClient(r){
   return {
     id:r.id, name:r.nombre||'', attn:r.atencion||'', email:r.email||'', phone:r.telefono||'', notes:r.notas||'',
-    cuit:r.cuit||'', portal:r.portal||'',
+    cuit:r.cuit||'', portal:r.portal||'', altaEstado:r.alta_estado||'sin_iniciar',
     contactos: Array.isArray(r.contactos) ? r.contactos : []
   };
 }
@@ -898,9 +911,9 @@ function rowQuoteDash(x, o){
   if(o.child){
     return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
       <td><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
-      <td>${esc(x.client||'—')}</td>
-      <td>${esc(x.attn||'—')}</td>
-      <td>${esc(x.comercial||'—')}</td>
+      <td>${esc(upperName(x.client)||'—')}</td>
+      <td>${esc(titleCase(x.attn)||'—')}</td>
+      <td>${esc(titleCase(x.comercial)||'—')}</td>
       <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
       <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
       <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
@@ -913,9 +926,9 @@ function rowQuoteDash(x, o){
     : `<b>${esc(x.ref)}</b>`;
   return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
     <td>${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
-    <td>${esc(x.client||'—')}</td>
-    <td>${esc(x.attn||'—')}</td>
-    <td>${esc(x.comercial||'—')}</td>
+    <td>${esc(upperName(x.client)||'—')}</td>
+    <td>${esc(titleCase(x.attn)||'—')}</td>
+    <td>${esc(titleCase(x.comercial)||'—')}</td>
     <td><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
     <td class="r"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
     <td class="r" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
@@ -973,7 +986,7 @@ VIEWS.quotes = function(){
      <button class="btn ghost" onclick="newQuote()">${ICO.plus} Nueva cotización</button>`);
 
   // Oportunidades de rental (o ambas) que todavía NO tienen cotización formal vinculada
-  let opps = DB.opps.filter(o=> (o.unidad==='rental'||o.unidad==='ambas') && !o.cotizacionId);
+  let opps = DB.opps.filter(o=> (o.unidad==='rental'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
   // Cotizaciones formales (tabla cotizaciones)
   let list=[...DB.quotes];
 
@@ -1159,6 +1172,7 @@ function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;',
 
 /* ================= CLIENTS ================= */
 let clientSearch='';
+let clientAltaFiltro=''; // '' | sin_iniciar | en_tramite | dado_alta
 window.clientSort = { col:'name', dir:1 };
 VIEWS.clients = function(){
   setHeader('Clientes','Base de contactos',
@@ -1172,6 +1186,7 @@ VIEWS.clients = function(){
         .toLowerCase().includes(q);
     });
   }
+  if(clientAltaFiltro) list = list.filter(c=> (c.altaEstado||'sin_iniciar')===clientAltaFiltro);
   const get = (c,col)=>{
     if(col==='name')  return (c.name||'').toLowerCase();
     if(col==='cuit')  return (c.cuit||'').toLowerCase();
@@ -1186,8 +1201,16 @@ VIEWS.clients = function(){
     if(va>vb) return  1*clientSort.dir;
     return 0;
   });
+  const altaCounts = { sin_iniciar:0, en_tramite:0, dado_alta:0 };
+  DB.clients.forEach(c=>{ const a=c.altaEstado||'sin_iniciar'; if(altaCounts[a]!=null) altaCounts[a]++; });
+  const fa = clientAltaFiltro;
   C().innerHTML = `
-    <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar por empresa, CUIT, contacto, email…" value="${esc(clientSearch)}"></div></div>
+    <div class="kpi-grid" style="margin-bottom:18px">
+      ${kpiCard('Sin iniciar', altaCounts.sin_iniciar, 0, 'Alta como proveedor pendiente', {onclick:"toggleClientAlta('sin_iniciar')", active:fa==='sin_iniciar'})}
+      ${kpiCard('En trámite', altaCounts.en_tramite, 0, 'Alta en proceso', {onclick:"toggleClientAlta('en_tramite')", active:fa==='en_tramite'})}
+      ${kpiCard('Dados de alta', altaCounts.dado_alta, 0, 'Habilitados como proveedor', {onclick:"toggleClientAlta('dado_alta')", active:fa==='dado_alta'})}
+    </div>
+    <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar por empresa, CUIT, contacto, email…" value="${esc(clientSearch)}"></div>${fa?`<button class="btn ghost sm" onclick="toggleClientAlta('${fa}')">Quitar filtro: ${ALTA_LBL[fa]}</button>`:''}</div>
     <div class="card">
       ${list.length? `<table class="grid">
         <thead><tr>
@@ -1197,6 +1220,7 @@ VIEWS.clients = function(){
           ${sortTh('Email','email','clientSort','VIEWS.clients')}
           ${sortTh('Teléfono','phone','clientSort','VIEWS.clients')}
           <th>Portal</th>
+          <th>Alta proveedor</th>
           ${sortTh('Cotiz.','quotes','clientSort','VIEWS.clients','c')}
           <th class="r"></th>
         </tr></thead>
@@ -1208,12 +1232,15 @@ VIEWS.clients = function(){
             : '—';
           const portalCell = c.portal
             ? `<a href="${esc(c.portal)}" target="_blank" rel="noopener">Abrir</a>` : '—';
+          const altaSt = c.altaEstado||'sin_iniciar';
+          const altaCell = `<span class="badge alta-${altaSt}">${ALTA_LBL[altaSt]||altaSt}</span>`;
           return `<tr>
             <td><b>${esc(upperName(c.name))}</b></td>
             <td>${esc(c.cuit||'—')}</td>
             <td>${contCell}</td>
             <td>${esc(c.email||'—')}</td><td>${esc(c.phone||'—')}</td>
             <td>${portalCell}</td>
+            <td>${altaCell}</td>
             <td class="c">${n}</td>
             <td class="r"><button class="btn ghost sm" onclick="clientForm('${c.id}')">Editar</button>
             <button class="btn sm" onclick="newQuote('${c.id}')">Cotizar</button></td>
@@ -1236,6 +1263,7 @@ function clientForm(id){
     </div>
     <div class="field"><label>Email</label><input id="f_email" value="${esc(c.email)}"></div>
     <div class="field"><label>Portal / Plataforma de contrataciones (URL)</label><input id="f_portal" value="${esc(c.portal||'')}" placeholder="https://..."></div>
+    <div class="field"><label>Estado de alta como proveedor</label><select id="f_alta">${ALTA_ESTADOS.map(a=>`<option value="${a}" ${a===(c.altaEstado||'sin_iniciar')?'selected':''}>${ALTA_LBL[a]}</option>`).join('')}</select></div>
     <div class="field">
       <label style="display:flex;align-items:center;justify-content:space-between">Contactos
         <button type="button" class="btn ghost sm" onclick="addClientContact()">${ICO.plus} Agregar contacto</button>
@@ -1282,7 +1310,7 @@ async function saveClient(id){
   const c={
     name:val('f_name').trim(), attn:val('f_attn')?val('f_attn').trim():'',
     email:val('f_email').trim(), phone:val('f_phone').trim(), notes:val('f_notes').trim(),
-    cuit:val('f_cuit').trim(), portal:val('f_portal').trim(), contactos
+    cuit:val('f_cuit').trim(), portal:val('f_portal').trim(), altaEstado:val('f_alta')||'sin_iniciar', contactos
   };
   if(!c.name){ toast('Ingresá el nombre del cliente'); return; }
   try{
@@ -1301,6 +1329,8 @@ async function delClient(id){
   }catch(e){ toast('Error al eliminar: '+e.message); }
 }
 function val(id){ const el=document.getElementById(id); return el?el.value:''; }
+function toggleClientAlta(a){ clientAltaFiltro = (clientAltaFiltro===a)?'':a; VIEWS.clients(); }
+window.toggleClientAlta = toggleClientAlta;
 
 /* ================= CATALOG ================= */
 VIEWS.catalog = function(){
@@ -1368,7 +1398,7 @@ function printCatalog(){
         <div class="doc-rule"></div>
         <div class="doc-ref">Precios de referencia</div>
       </div>
-      <div class="col-div head-date">${ICO.cal}<div class="meta-label">FECHA</div><div class="meta-val">${esc(todayStr())}</div></div>
+      <div class="col-div head-date">${ICO.cal}<div class="meta-label">FECHA</div><div class="meta-val">${esc(new Date().toLocaleDateString('es-AR'))}</div></div>
       <div class="col-div head-tuv"><img src="${ISO_SEAL}" class="head-tuv-img" alt="ISO 9001 14001 45001 TÜV NORD"></div>
     </div>
     <div class="sec"><span class="num">01</span><span class="t">MÓDULOS Y SERVICIOS</span><span class="ln"></span></div>
@@ -1408,8 +1438,8 @@ function printCatalog(){
 }
 
 /* ================= OPORTUNIDADES ================= */
-const OPP_ESTADOS = ['nuevo','borrador','enviada','negociacion','ganada','perdida'];
-const OPP_ESTADO_LBL = { nuevo:'Nuevo - Pendiente', borrador:'En proceso - Borrador', enviada:'Cotizado - Enviado', negociacion:'En negociación', ganada:'Ganado', perdida:'Perdido' };
+const OPP_ESTADOS = ['nuevo','borrador','enviada','negociacion','ganada','perdida','desestimada'];
+const OPP_ESTADO_LBL = { nuevo:'Nuevo - Pendiente', borrador:'En proceso - Borrador', enviada:'Cotizado - Enviado', negociacion:'En negociación', ganada:'Ganado', perdida:'Perdido', desestimada:'Desestimada' };
 const OPP_PRIOS = ['urgente','alta','media','baja'];
 const OPP_PRIO_LBL = { urgente:'Urgente', alta:'Alta', media:'Media', baja:'Baja' };
 const OPP_TIPOS = ['Licitación pública','Licitación privada','Pedido de cotización','Notificación de proceso','Consulta','Otro'];
@@ -1429,6 +1459,7 @@ VIEWS.opps = function(){
   let list = [...DB.opps];
   if(oppFilters.unidad)    list = list.filter(o=>o.unidad===oppFilters.unidad);
   if(oppFilters.estado)    list = list.filter(o=>o.state===oppFilters.estado);
+  else                     list = list.filter(o=>o.state!=='desestimada');
   if(oppFilters.prioridad) list = list.filter(o=>o.prioridad===oppFilters.prioridad);
 
   const og = (o,col)=>{
@@ -1540,9 +1571,13 @@ function openOpp(id){
     ? `<button class="btn" onclick="cotizarOportunidad('${o.id}')">${ICO.plus} Generar cotización</button>` : '';
   const verCotBtn = o.cotizacionId
     ? `<button class="btn" onclick="abrirCotizacionDeOpp('${o.id}')">Ver cotización</button>` : '';
+  const desestimarBtn = o.state==='desestimada'
+    ? `<button class="btn ghost" onclick="reactivarOpp('${o.id}')">Reactivar</button>`
+    : `<button class="btn ghost" style="color:#8a7a3a" onclick="desestimarOpp('${o.id}')" title="Marcar como no-oportunidad (mal clasificada por Claude)">Desestimar</button>`;
   const foot = `
     <button class="btn ghost" onclick="closeModal()">Cerrar</button>
     <button class="btn ghost" onclick="editOpp('${o.id}')">Editar</button>
+    ${desestimarBtn}
     <button class="btn ghost" style="color:#b0584f" onclick="delOpp('${o.id}')">Eliminar</button>
     <button class="btn ghost" onclick="addActModal('${o.id}')">${ICO.plus} Gestión</button>
     ${verCotBtn}${cotizarBtn}`;
@@ -1632,6 +1667,19 @@ async function delOpp(id){
     await reloadDB(); closeModal(); toast('Oportunidad eliminada'); refreshCurrent();
   }catch(e){ toast('Error al eliminar: '+e.message); }
 }
+async function desestimarOpp(id){
+  if(!confirm('¿Desestimar esta oportunidad? Quedará marcada como no-oportunidad (no entra al pipeline ni a los indicadores). Podés reactivarla luego.')) return;
+  try{
+    await SB.updateOpp(id,{estado:'desestimada'});
+    await reloadDB(); closeModal(); toast('Oportunidad desestimada'); refreshCurrent();
+  }catch(e){ toast('Error: '+e.message); }
+}
+async function reactivarOpp(id){
+  try{
+    await SB.updateOpp(id,{estado:'nuevo'});
+    await reloadDB(); closeModal(); toast('Oportunidad reactivada'); refreshCurrent();
+  }catch(e){ toast('Error: '+e.message); }
+}
 
 function addActModal(oppId){
   const o = DB.opps.find(x=>x.id===oppId); if(!o) return;
@@ -1669,6 +1717,7 @@ VIEWS.ventas = function(){
 
   let list = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
   if(ventasFiltroEstado) list = list.filter(o=>o.state===ventasFiltroEstado);
+  else list = list.filter(o=> o.state!=='desestimada');
   if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
   const vg = (o,col)=>{
     switch(col){
@@ -1746,7 +1795,7 @@ function ventasKPIs(){
   const ganadasMes = v.filter(o=> o.state==='ganada' && (o.updated||o.created)>=tm).length;
   // cotizadas en el mes: las que llegaron a estado cotizado o más avanzado este mes
   const cotizadasMes = v.filter(o=> ['enviada','negociacion','ganada','perdida'].includes(o.state) && (o.updated||o.created)>=tm).length;
-  const pipeline = v.filter(o=> o.state!=='perdida' && o.state!=='ganada')
+  const pipeline = v.filter(o=> o.state!=='perdida' && o.state!=='ganada' && o.state!=='desestimada')
                     .reduce((s,o)=> s + (o.valor||0), 0);
   const cerradas = v.filter(o=> o.state==='ganada' || o.state==='perdida').length;
   const conv = cerradas>0 ? Math.round(100*v.filter(o=>o.state==='ganada').length/cerradas) : 0;
@@ -1778,7 +1827,7 @@ VIEWS.dashboard_ventas = function(){
       ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
       ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2', {onclick:"toggleVentasFiltro('ganada')", active:f==='ganada'})}
       ${kpiCard('Conversión', k.conv, 10, 'Ganadas / cerradas · obj. 10%', {pct:true})}
-      ${card('Pipeline', (k.pipeline?('$ '+fmt(k.pipeline)):'—'), 'Valor estimado en juego')}
+      ${card('Pipeline', (k.pipeline?('USD '+fmt(k.pipeline)):'—'), 'Valor estimado en juego (USD)')}
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
@@ -1804,7 +1853,7 @@ function toggleVentasFiltro(f){
 /* ================= PROSPECCIÓN ================= */
 const PROSP_ESTADOS = ['sin_contactar','contactado','en_conversacion','calificado','descartado'];
 const PROSP_ESTADO_LBL = { sin_contactar:'Sin contactar', contactado:'Contactado', en_conversacion:'En conversación', calificado:'Calificado', descartado:'Descartado' };
-let prospView = { mode:'empresas', empresaId:null, search:'', filtroEstado:'', sector:'' };
+let prospView = { mode:'empresas', empresaId:null, search:'', filtroEstado:'', sector:'', filtroEstadoEmp:'', filtroComercial:'' };
 
 VIEWS.prosp = async function(){
   setHeader('Prospección','Prospección comercial multisector',
@@ -1825,6 +1874,13 @@ function startOfWeek(){ const d=new Date(); d.setHours(0,0,0,0); const dow=(d.ge
 function startOfMonth(){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),1).getTime(); }
 
 function prospGestiones(){ return DB.acts.filter(a=> a.descripcion && a.descripcion.includes('[prospecto:')); }
+
+// Cuenta gestiones de prospección por comercial (para el gráfico "quién contacta")
+function prospPorComercial(){
+  const counts = {};
+  prospGestiones().forEach(a=>{ const c = (a.comercial||'').trim() || 'Sin asignar'; counts[c]=(counts[c]||0)+1; });
+  return Object.entries(counts).sort((a,b)=> b[1]-a[1]);
+}
 
 function prospKPIs(){
   const g = prospGestiones();
@@ -1875,26 +1931,67 @@ function renderEmpresas(){
   const sectores = [...new Set(DB.empProsp.map(e=>e.sector).filter(Boolean))].sort();
   if(prospView.sector) emps = emps.filter(e=> e.sector===prospView.sector);
   if(q) emps = emps.filter(e=> e.nombre.toLowerCase().includes(q));
+  // filtro por estado: empresas que tengan al menos un prospecto en ese estado
+  const fe = prospView.filtroEstadoEmp;
+  if(fe) emps = emps.filter(e=> (byEmp[e.id]||[]).some(p=>p.estado===fe));
   emps.sort((a,b)=> (byEmp[b.id]?.length||0) - (byEmp[a.id]?.length||0) || a.nombre.localeCompare(b.nombre));
 
   const totalProsp = DB.prospectos.length;
-  const totalEmp = DB.empProsp.length;
   const k = prospKPIs();
 
+  // Conteo de prospectos por estado (para KPIs clickeables)
+  const estadoCounts = {};
+  DB.prospectos.forEach(p=> estadoCounts[p.estado]=(estadoCounts[p.estado]||0)+1);
+
+  // Gráfico "quién contacta": gestiones por comercial
+  const porCom = prospPorComercial();
+  const maxCom = porCom.length ? porCom[0][1] : 0;
+  const chart = porCom.length
+    ? porCom.map(([name,n])=>{
+        const pct = maxCom? Math.round(100*n/maxCom) : 0;
+        return `<div class="qc-row">
+          <div class="qc-name">${esc(name)}</div>
+          <div class="qc-track"><div class="qc-fill" style="width:${pct}%"></div></div>
+          <div class="qc-val">${n}</div>
+        </div>`;
+      }).join('')
+    : '<div class="help" style="padding:8px 0">Todavía no hay gestiones registradas.</div>';
+
   const sectorOpts = `<option value="">Todos los sectores</option>`+sectores.map(s=>`<option value="${esc(s)}" ${s===prospView.sector?'selected':''}>${esc(s)}</option>`).join('');
+  const estadoFiltroOpts = `<option value="">Todos los estados</option>`+PROSP_ESTADOS.map(s=>`<option value="${s}" ${s===fe?'selected':''}>${PROSP_ESTADO_LBL[s]} (${estadoCounts[s]||0})</option>`).join('');
+
+  // KPIs de estado clickeables (filtran la lista de abajo)
+  const estadoKpis = PROSP_ESTADOS.map(st=>
+    kpiCard(PROSP_ESTADO_LBL[st], estadoCounts[st]||0, 0, 'Tocá para filtrar empresas',
+      {onclick:`toggleProspEstado('${st}')`, active:fe===st})
+  ).join('');
 
   C().innerHTML = `
-    <div class="kpi-grid" style="margin-bottom:20px">
+    <div class="kpi-grid" style="margin-bottom:16px">
       ${kpiCard('Contactados hoy', k.hoy, 30, 'Gestiones registradas hoy · objetivo 30')}
       ${kpiCard('Contactados ayer', k.ayer, 30, 'Gestiones de ayer · objetivo 30')}
       ${kpiCard('Gestiones de la semana', k.semana, 150, 'Esta semana · objetivo 150')}
       ${kpiCard('En conversación', k.enConv, 0, 'Prospectos en conversación activa')}
       ${kpiCard('Convertidos a oportunidad', k.convMes, 60, 'Calificados con oportunidad · objetivo 60')}
     </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;align-items:start">
+      <div class="card"><div class="card-b">
+        <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:10px">Prospectos por estado <span class="help" style="font-weight:400">· tocá para filtrar</span></div>
+        <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px">${estadoKpis}</div>
+      </div></div>
+      <div class="card"><div class="card-b">
+        <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:12px">Quién contacta · gestiones por comercial</div>
+        <div class="qc-chart">${chart}</div>
+      </div></div>
+    </div>
+
     <div class="opp-filters">
-      <input id="pSearch" class="inp" style="max-width:300px" placeholder="Buscar empresa…" value="${esc(prospView.search)}">
+      <input id="pSearch" class="inp" style="max-width:280px" placeholder="Buscar empresa…" value="${esc(prospView.search)}">
       <select id="pSector">${sectorOpts}</select>
-      <span class="help" style="margin-left:auto">${emps.length} empresas${prospView.sector||q?' (filtradas)':''} · ${totalProsp} contactos</span>
+      <select id="pEstadoEmp">${estadoFiltroOpts}</select>
+      ${fe?`<button class="btn ghost sm" onclick="toggleProspEstado('${fe}')">Quitar filtro: ${PROSP_ESTADO_LBL[fe]}</button>`:''}
+      <span class="help" style="margin-left:auto">${emps.length} empresas${prospView.sector||q||fe?' (filtradas)':''} · ${totalProsp} contactos</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       <table class="grid">
@@ -1913,14 +2010,18 @@ function renderEmpresas(){
           </tr>`;
         }).join('')}</tbody>
       </table>
-      ${emps.length>400?`<div class="help" style="padding:12px 16px">Mostrando las primeras 400 empresas. Usá el buscador o el filtro de sector para acotar.</div>`:''}
+      ${emps.length>400?`<div class="help" style="padding:12px 16px">Mostrando las primeras 400 empresas. Usá el buscador o los filtros para acotar.</div>`:''}
     </div></div>`;
 
   const s=document.getElementById('pSearch');
   s.oninput=()=>{ prospView.search=s.value; const p=s.selectionStart; renderEmpresas(); const n=document.getElementById('pSearch'); n.focus(); n.setSelectionRange(p,p); };
   document.getElementById('pSector').onchange=ev=>{ prospView.sector=ev.target.value; renderEmpresas(); };
+  document.getElementById('pEstadoEmp').onchange=ev=>{ prospView.filtroEstadoEmp=ev.target.value; renderEmpresas(); };
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=>{ prospView.mode='empresa'; prospView.empresaId=tr.dataset.emp; renderEmpresaDetalle(); });
 }
+
+function toggleProspEstado(st){ prospView.filtroEstadoEmp = (prospView.filtroEstadoEmp===st)?'':st; renderEmpresas(); }
+window.toggleProspEstado = toggleProspEstado;
 
 function renderEmpresaDetalle(){
   const e = DB.empProsp.find(x=>x.id===prospView.empresaId);
@@ -2568,7 +2669,7 @@ window.toggleSort=toggleSort; window.addClientContact=addClientContact; window.d
 window.printCatalog=printCatalog;
 window.doLogin=doLogin;
 window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; window.editOpp=editOpp;
-window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.addActModal=addActModal; window.saveAct=saveAct;
+window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.desestimarOpp=desestimarOpp; window.reactivarOpp=reactivarOpp; window.addActModal=addActModal; window.saveAct=saveAct;
 window.newProspecto=newProspecto; window.saveNewProspecto=saveNewProspecto; window.openProspecto=openProspecto;
 window.newOppVentas=newOppVentas; window.saveNewOppFrom=saveNewOppFrom; window.newOppRental=newOppRental;
 window.cotizarOportunidad=cotizarOportunidad; window.abrirCotizacionDeOpp=abrirCotizacionDeOpp;
