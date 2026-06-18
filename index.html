@@ -1780,21 +1780,23 @@ async function reactivarOpp(id){
 async function crearCobranzaDesdeOpp(oppId){
   try{
     const o = DB.opps.find(x=>x.id===oppId); if(!o) return;
-    if(DB.cobranzas.some(c=> c.oppId===oppId)) return; // ya existe
     const cli = o.clientId ? DB.clients.find(c=>c.id===o.clientId) : null;
     const cot = o.cotizacionId ? DB.quotes.find(q=>q.id===o.cotizacionId) : null;
     const montoBase  = cot ? quoteTotal(cot) : (o.valor!=null?o.valor:0);
     const moneda     = cot ? (cot.currency||'USD') : (o.moneda||'USD');
     const formaPago  = (cot && cot.pago) ? [{concepto:cot.pago, monto:null}] : [];
-    await SB.addCobranza(cobranzaToRow({
-      ref: o.ref||'', oppId: o.id, clientId: o.clientId||'',
-      razonSocial: cli ? cli.name : oppClientName(o),
-      cuit: cli ? (cli.cuit||'') : '',
-      montoBase, moneda, formaPago, estado:'pendiente',
-      notas: cot ? 'Generada al ganar la venta. Datos tomados de la cotización vinculada.' : 'Generada al ganar la venta. Completar monto y forma de pago.'
-    }));
-    toast('Venta enviada a Cobranzas');
-    // Aviso a Facturación (Teams + mail) vía Power Automate. No bloquea ni rompe si falla.
+    const yaExiste = DB.cobranzas.some(c=> c.oppId===oppId);
+    if(!yaExiste){
+      await SB.addCobranza(cobranzaToRow({
+        ref: o.ref||'', oppId: o.id, clientId: o.clientId||'',
+        razonSocial: cli ? cli.name : oppClientName(o),
+        cuit: cli ? (cli.cuit||'') : '',
+        montoBase, moneda, formaPago, estado:'pendiente',
+        notas: cot ? 'Generada al ganar la venta. Datos tomados de la cotización vinculada.' : 'Generada al ganar la venta. Completar monto y forma de pago.'
+      }));
+      toast('Venta enviada a Cobranzas');
+    }
+    // Aviso a Facturación (Teams + mail). Se manda siempre al ganar, exista o no la cobranza.
     notificarCobranza({
       ref: o.ref||'',
       razon_social: cli ? cli.name : oppClientName(o),
@@ -1812,9 +1814,8 @@ async function crearCobranzaDesdeOpp(oppId){
 // y mail (vía Edge Function notificar-cobranza). Silencioso: nunca interrumpe el flujo de la app.
 async function notificarCobranza(payload){
   const sym = (payload.moneda==='ARS') ? '$' : 'USD';
-  // 1) Teams: POST directo a la URL firmada del Workflow.
-  // La plantilla "Enviar alertas de webhook a un canal" espera un Adaptive Card
-  // dentro de attachments (no acepta texto plano: da 400).
+  let okTeams = false, okMail = false;
+  // 1) Teams: POST a la URL firmada del Workflow, formato Adaptive Card.
   if(COBRANZA_WEBHOOK_URL){
     const facts = [
       {title:'Ref:', value: payload.ref||'—'},
@@ -1845,17 +1846,25 @@ async function notificarCobranza(payload){
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify(card)
       });
-      if(!r.ok) console.warn('Teams respondió', r.status);
+      okTeams = r.ok || r.status===202;
+      if(!okTeams) console.warn('Teams respondió', r.status);
     }catch(e){ console.warn('Aviso Teams no enviado:', e.message); }
   }
-  // 2) Mail: vía Edge Function (server-side, usa Microsoft Graph). No bloquea si falla.
+  // 2) Mail: vía Edge Function (server-side, Microsoft Graph).
   try{
-    await fetch(SB_URL + '/functions/v1/notificar-cobranza', {
+    const r = await fetch(SB_URL + '/functions/v1/notificar-cobranza', {
       method:'POST',
       headers:{'Content-Type':'application/json', 'Authorization':'Bearer '+SB_KEY},
       body: JSON.stringify(payload)
     });
+    okMail = r.ok;
+    if(!okMail){ const t=await r.text().catch(()=> ''); console.warn('Mail Edge Function respondió', r.status, t); }
   }catch(e){ console.warn('Aviso mail no enviado:', e.message); }
+  // Feedback visible
+  if(okTeams && okMail)      toast('Aviso a Facturación enviado (Teams + mail)');
+  else if(okTeams)          toast('Aviso enviado a Teams (mail falló — ver consola)');
+  else if(okMail)           toast('Mail enviado a Facturación (Teams falló — ver consola)');
+  else                      toast('No se pudo enviar el aviso — ver consola (F12)');
 }
 
 function addActModal(oppId){
