@@ -1812,23 +1812,40 @@ async function crearCobranzaDesdeOpp(oppId){
 // y mail (vía Edge Function notificar-cobranza). Silencioso: nunca interrumpe el flujo de la app.
 async function notificarCobranza(payload){
   const sym = (payload.moneda==='ARS') ? '$' : 'USD';
-  // 1) Teams: POST directo a la URL firmada del Workflow. Mensaje en texto plano.
+  // 1) Teams: POST directo a la URL firmada del Workflow.
+  // La plantilla "Enviar alertas de webhook a un canal" espera un Adaptive Card
+  // dentro de attachments (no acepta texto plano: da 400).
   if(COBRANZA_WEBHOOK_URL){
-    const texto =
-      `💰 Nueva venta ganada — pasa a Cobranzas\n\n` +
-      `Ref: ${payload.ref||'—'}\n` +
-      `Cliente: ${payload.razon_social||'—'}${payload.cuit?` (CUIT ${payload.cuit})`:''}\n` +
-      `Monto: ${sym} ${Number(payload.monto_total||0).toLocaleString('es-AR')}\n` +
-      `Forma de pago: ${payload.forma_pago||'—'}\n` +
-      (payload.comercial?`Comercial: ${payload.comercial}\n`:'') +
-      (payload.unidad?`Unidad: ${payload.unidad}`:'');
+    const facts = [
+      {title:'Ref:', value: payload.ref||'—'},
+      {title:'Cliente:', value: (payload.razon_social||'—')+(payload.cuit?` (CUIT ${payload.cuit})`:'')},
+      {title:'Monto:', value: `${sym} ${Number(payload.monto_total||0).toLocaleString('es-AR')}`},
+      {title:'Forma de pago:', value: payload.forma_pago||'—'}
+    ];
+    if(payload.comercial) facts.push({title:'Comercial:', value: payload.comercial});
+    if(payload.unidad)    facts.push({title:'Unidad:', value: payload.unidad});
+    const card = {
+      type:'message',
+      attachments:[{
+        contentType:'application/vnd.microsoft.card.adaptive',
+        content:{
+          $schema:'http://adaptivecards.io/schemas/adaptive-card.json',
+          type:'AdaptiveCard',
+          version:'1.4',
+          body:[
+            {type:'TextBlock', size:'Medium', weight:'Bolder', text:'💰 Nueva venta ganada — pasa a Cobranzas', wrap:true},
+            {type:'FactSet', facts: facts}
+          ]
+        }
+      }]
+    };
     try{
-      await fetch(COBRANZA_WEBHOOK_URL, {
+      const r = await fetch(COBRANZA_WEBHOOK_URL, {
         method:'POST',
-        mode:'no-cors',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ text: texto })
+        body: JSON.stringify(card)
       });
+      if(!r.ok) console.warn('Teams respondió', r.status);
     }catch(e){ console.warn('Aviso Teams no enviado:', e.message); }
   }
   // 2) Mail: vía Edge Function (server-side, usa Microsoft Graph). No bloquea si falla.
