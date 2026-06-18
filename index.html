@@ -617,6 +617,10 @@ const SB = {
   listPagos:    () => sbFetch('/pagos?select=*&order=fecha.desc'),
   addPago:      (p) => sbFetch('/pagos', {method:'POST', body: JSON.stringify(p)}).then(r=>r[0]),
   delPago:      (id) => sbFetch('/pagos?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // ---- Adicionales (conceptos sumados a la cobranza luego de ganada) ----
+  listAdicionales: () => sbFetch('/adicionales?select=*&order=created_at.desc'),
+  addAdicional:    (a) => sbFetch('/adicionales', {method:'POST', body: JSON.stringify(a)}).then(r=>r[0]),
+  delAdicional:    (id) => sbFetch('/adicionales?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
 };
 
 // ---- Mapeo entre el modelo interno (app) y las columnas de Supabase ----
@@ -707,23 +711,45 @@ function rowToProspecto(r){
     oppId:r.oportunidad_id||'', notas:r.notas||''
   };
 }
-// ---- Cobranzas / Pagos ----
+// ---- Cobranzas / Pagos / Adicionales ----
+// Normaliza forma_pago a un array de líneas {concepto, monto}.
+// Retrocompat: si viene texto (cobranzas viejas), lo convierte en una sola línea sin monto.
+function parseFormaPago(v){
+  if(Array.isArray(v)) return v.map(l=>({concepto:l.concepto||'', monto:l.monto!=null?Number(l.monto):null}));
+  if(typeof v==='string' && v.trim()) return [{concepto:v.trim(), monto:null}];
+  return [];
+}
 function rowToCobranza(r){
   return {
     id:r.id, ref:r.ref||'', oppId:r.oportunidad_id||'', clientId:r.cliente_id||'',
     razonSocial:r.razon_social||'', cuit:r.cuit||'',
-    montoTotal:r.monto_total!=null?Number(r.monto_total):0, moneda:r.moneda||'USD',
-    formaPago:r.forma_pago||'', estado:r.estado||'pendiente', notas:r.notas||'',
+    montoBase:r.monto_total!=null?Number(r.monto_total):0, moneda:r.moneda||'USD',
+    formaPago:parseFormaPago(r.forma_pago), estado:r.estado||'pendiente', notas:r.notas||'',
     created:r.created_at?Date.parse(r.created_at):Date.now()
   };
 }
 function cobranzaToRow(c){
+  const fp = Array.isArray(c.formaPago)
+    ? c.formaPago.filter(l=>l.concepto||l.monto!=null).map(l=>({concepto:(l.concepto||'').trim(), monto:(l.monto===''||l.monto==null)?null:num(l.monto)}))
+    : parseFormaPago(c.formaPago);
   return {
     ref:c.ref||null, oportunidad_id:c.oppId||null, cliente_id:c.clientId||null,
     razon_social:c.razonSocial||null, cuit:c.cuit||null,
-    monto_total:(c.montoTotal===''||c.montoTotal==null)?0:num(c.montoTotal),
-    moneda:c.moneda||'USD', forma_pago:c.formaPago||null,
+    monto_total:(c.montoBase===''||c.montoBase==null)?0:num(c.montoBase),
+    moneda:c.moneda||'USD', forma_pago:fp,
     estado:c.estado||'pendiente', notas:c.notas||null
+  };
+}
+function rowToAdicional(r){
+  return {
+    id:r.id, cobranzaId:r.cobranza_id||'', descripcion:r.descripcion||'',
+    monto:r.monto!=null?Number(r.monto):0, created:r.created_at?Date.parse(r.created_at):Date.now()
+  };
+}
+function adicionalToRow(a){
+  return {
+    cobranza_id:a.cobranzaId||null, descripcion:a.descripcion||null,
+    monto:(a.monto===''||a.monto==null)?0:num(a.monto)
   };
 }
 function rowToPago(r){
@@ -740,7 +766,7 @@ function pagoToRow(p){
     medio:p.medio||null, notas:p.notas||null
   };
 }
-let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], cobranzas:[], pagos:[], seq:1 };
+let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], cobranzas:[], pagos:[], adicionales:[], seq:1 };
 let PROSP_LOADED = false;
 let SB_READY = false;
 
@@ -748,9 +774,9 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 
 // Recarga todo el estado desde Supabase hacia DB
 async function reloadDB(){
-  const [clients, catalog, quotes, seq, opps, acts, cobranzas, pagos] = await Promise.all([
+  const [clients, catalog, quotes, seq, opps, acts, cobranzas, pagos, adicionales] = await Promise.all([
     SB.listClients(), SB.listCatalog(), SB.listQuotes(), SB.peekSeq(), SB.listOpps(), SB.listActs(),
-    SB.listCobranzas().catch(()=>[]), SB.listPagos().catch(()=>[])
+    SB.listCobranzas().catch(()=>[]), SB.listPagos().catch(()=>[]), SB.listAdicionales().catch(()=>[])
   ]);
   DB.clients = clients.map(rowToClient);
   DB.catalog = catalog.map(rowToCat);
@@ -760,6 +786,7 @@ async function reloadDB(){
   DB.acts    = acts.map(rowToAct);
   DB.cobranzas = cobranzas.map(rowToCobranza);
   DB.pagos     = pagos.map(rowToPago);
+  DB.adicionales = adicionales.map(rowToAdicional);
   SB_READY = true;
 }
 
@@ -1745,14 +1772,14 @@ async function crearCobranzaDesdeOpp(oppId){
     if(DB.cobranzas.some(c=> c.oppId===oppId)) return; // ya existe
     const cli = o.clientId ? DB.clients.find(c=>c.id===o.clientId) : null;
     const cot = o.cotizacionId ? DB.quotes.find(q=>q.id===o.cotizacionId) : null;
-    const montoTotal = cot ? quoteTotal(cot) : (o.valor!=null?o.valor:0);
+    const montoBase  = cot ? quoteTotal(cot) : (o.valor!=null?o.valor:0);
     const moneda     = cot ? (cot.currency||'USD') : (o.moneda||'USD');
-    const formaPago  = cot ? (cot.pago||'') : '';
+    const formaPago  = (cot && cot.pago) ? [{concepto:cot.pago, monto:null}] : [];
     await SB.addCobranza(cobranzaToRow({
       ref: o.ref||'', oppId: o.id, clientId: o.clientId||'',
       razonSocial: cli ? cli.name : oppClientName(o),
       cuit: cli ? (cli.cuit||'') : '',
-      montoTotal, moneda, formaPago, estado:'pendiente',
+      montoBase, moneda, formaPago, estado:'pendiente',
       notas: cot ? 'Generada al ganar la venta. Datos tomados de la cotización vinculada.' : 'Generada al ganar la venta. Completar monto y forma de pago.'
     }));
     toast('Venta enviada a Cobranzas');
@@ -2304,15 +2331,20 @@ const COB_ESTADO_LBL = { pendiente:'Pendiente', parcial:'Parcial', cobrado:'Cobr
 let cobFiltroEstado = '';
 let cobSearch = '';
 
+// Suma de adicionales de una cobranza
+function cobAdicionales(cobId){ return DB.adicionales.filter(a=>a.cobranzaId===cobId).reduce((s,a)=>s+(a.monto||0),0); }
+// Total efectivo a cobrar = monto base (de la cotización) + adicionales
+function cobTotal(c){ return (c.montoBase||0) + cobAdicionales(c.id); }
 // Suma de pagos de una cobranza
 function cobPagado(cobId){ return DB.pagos.filter(p=>p.cobranzaId===cobId).reduce((a,p)=>a+(p.monto||0),0); }
-// Saldo pendiente
-function cobSaldo(c){ return Math.max(0, (c.montoTotal||0) - cobPagado(c.id)); }
-// Estado calculado a partir de pagos (sin tocar lo que guarde facturación manualmente)
+// Saldo pendiente = total - pagado
+function cobSaldo(c){ return Math.max(0, cobTotal(c) - cobPagado(c.id)); }
+// Estado calculado a partir de pagos vs total efectivo
 function cobEstadoCalc(c){
   const pag = cobPagado(c.id);
+  const tot = cobTotal(c);
   if(pag<=0) return 'pendiente';
-  if(pag < (c.montoTotal||0)) return 'parcial';
+  if(pag < tot) return 'parcial';
   return 'cobrado';
 }
 
@@ -2333,7 +2365,7 @@ VIEWS.cobranzas = function(){
   monedas.forEach(m => cuenta[m] = { total:0, cobrado:0, pendiente:0, n:0 });
   DB.cobranzas.forEach(c=>{
     const m = (c.moneda==='ARS')?'ARS':'USD';
-    cuenta[m].total += (c.montoTotal||0);
+    cuenta[m].total += cobTotal(c);
     cuenta[m].cobrado += cobPagado(c.id);
     cuenta[m].pendiente += cobSaldo(c);
     cuenta[m].n++;
@@ -2386,7 +2418,7 @@ function rowCobranza(c){
     <td><strong>${esc(c.ref||'—')}</strong></td>
     <td>${esc(upperName(c.razonSocial)||'—')}</td>
     <td style="font-size:12px;color:var(--muted)">${esc(c.cuit||'—')}</td>
-    <td class="r">${sym} ${fmt(c.montoTotal)}</td>
+    <td class="r">${sym} ${fmt(cobTotal(c))}</td>
     <td class="r" style="color:#4f8a53">${sym} ${fmt(pag)}</td>
     <td class="r" style="color:${saldo>0?'#b3853a':'#4f8a53'};font-weight:700">${sym} ${fmt(saldo)}</td>
     <td><span class="badge cob-${est}">${COB_ESTADO_LBL[est]}</span></td>
@@ -2397,21 +2429,51 @@ function openCobranza(id){
   const c = DB.cobranzas.find(x=>x.id===id); if(!c) return;
   const sym = (c.moneda==='ARS')?'$':'USD';
   const pagos = DB.pagos.filter(p=>p.cobranzaId===id).sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
+  const adics = DB.adicionales.filter(a=>a.cobranzaId===id).sort((a,b)=> a.created-b.created);
   const pag = cobPagado(id);
+  const total = cobTotal(c);
   const saldo = cobSaldo(c);
   const est = cobEstadoCalc(c);
+
+  // Forma de pago como líneas concepto + monto
+  const fpLineas = (c.formaPago && c.formaPago.length)
+    ? c.formaPago.map(l=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0;border-bottom:1px dashed var(--line)">
+         <span style="color:#37432c">${esc(l.concepto||'—')}</span>
+         <span style="font-weight:600;color:#37432c;white-space:nowrap">${l.monto!=null?(sym+' '+fmt(l.monto)):'—'}</span>
+       </div>`).join('')
+    : '<div class="help">Sin desglose de forma de pago. Usá "Editar datos" para cargarlo.</div>';
+
+  // Adicionales con su botón quitar
+  const adicLineas = adics.length
+    ? adics.map(a=>`<div class="opp-act-item" style="display:flex;justify-content:space-between;align-items:center">
+         <div><strong>${sym} ${fmt(a.monto)}</strong> · ${esc(a.descripcion||'—')}</div>
+         <button class="btn ghost sm" style="color:#b0584f" onclick="delAdicional('${a.id}','${id}')">Quitar</button>
+       </div>`).join('')
+    : '<div class="help">Sin adicionales. Usá "Agregar adicional" para sumar conceptos posteriores a la venta.</div>';
 
   const body = `
     <div class="opp-detail-grid">
       <div class="fld"><label>Referencia</label><div class="val">${esc(c.ref||'—')}</div></div>
       <div class="fld"><label>Cliente / Razón social</label><div class="val">${esc(c.razonSocial||'—')}</div></div>
       <div class="fld"><label>CUIT</label><div class="val">${esc(c.cuit||'—')}</div></div>
-      <div class="fld"><label>Monto total</label><div class="val">${sym} ${fmt(c.montoTotal)}</div></div>
+      <div class="fld"><label>Monto base</label><div class="val">${sym} ${fmt(c.montoBase)}</div></div>
+      <div class="fld"><label>Adicionales</label><div class="val">${sym} ${fmt(cobAdicionales(id))}</div></div>
+      <div class="fld"><label>Total a cobrar</label><div class="val" style="font-weight:700">${sym} ${fmt(total)}</div></div>
       <div class="fld"><label>Cobrado</label><div class="val" style="color:#4f8a53">${sym} ${fmt(pag)}</div></div>
       <div class="fld"><label>Saldo pendiente</label><div class="val" style="color:${saldo>0?'#b3853a':'#4f8a53'};font-weight:700">${sym} ${fmt(saldo)}</div></div>
     </div>
-    <div class="fld" style="margin-top:8px"><label>Forma de pago</label><div class="val" style="font-size:13.5px;color:#37432c;white-space:pre-wrap">${esc(c.formaPago||'—')}</div></div>
-    <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:center">
+
+    <div style="margin-top:16px">
+      <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Forma de pago</label>
+      <div style="margin-top:6px">${fpLineas}</div>
+    </div>
+
+    <div style="margin-top:16px">
+      <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Adicionales (${adics.length})</label>
+      <div style="margin-top:6px">${adicLineas}</div>
+    </div>
+
+    <div style="margin-top:16px;display:flex;justify-content:space-between;align-items:center">
       <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Pagos registrados (${pagos.length})</label>
       <span class="badge cob-${est}">${COB_ESTADO_LBL[est]}</span>
     </div>
@@ -2430,6 +2492,7 @@ function openCobranza(id){
   const foot = `
     <button class="btn ghost" onclick="closeModal()">Cerrar</button>
     <button class="btn ghost" onclick="editCobranza('${id}')">Editar datos</button>
+    <button class="btn ghost" onclick="addAdicionalModal('${id}')">${ICO.plus} Adicional</button>
     <button class="btn" onclick="addPagoModal('${id}')">${ICO.plus} Registrar pago</button>`;
   openModal('Cobranza · '+(c.ref||''), body, foot);
 }
@@ -2437,24 +2500,54 @@ function openCobranza(id){
 function editCobranza(id){
   const c = DB.cobranzas.find(x=>x.id===id); if(!c) return;
   const monedaOpts = [['USD','USD'],['ARS','ARS']].map(([v,l])=>`<option value="${v}" ${v===c.moneda?'selected':''}>${l}</option>`).join('');
+  // copia de trabajo de las líneas de forma de pago
+  FP_LINES = (c.formaPago && c.formaPago.length) ? c.formaPago.map(l=>({concepto:l.concepto||'', monto:l.monto!=null?l.monto:''})) : [];
   openModal('Editar cobranza', `
     <div class="opp-detail-grid">
       <div class="fld"><label>Razón social</label><input id="cobRazon" class="inp" value="${esc(c.razonSocial||'')}"></div>
       <div class="fld"><label>CUIT</label><input id="cobCuit" class="inp" value="${esc(c.cuit||'')}"></div>
-      <div class="fld"><label>Monto total</label><input id="cobMonto" class="inp" value="${esc(String(c.montoTotal||0))}"></div>
+      <div class="fld"><label>Monto base</label><input id="cobMonto" class="inp" value="${esc(String(c.montoBase||0))}"></div>
       <div class="fld"><label>Moneda</label><select id="cobMoneda" class="inp">${monedaOpts}</select></div>
     </div>
-    <div class="fld" style="margin-top:10px"><label>Forma de pago detallada</label><textarea id="cobForma" class="inp" rows="3">${esc(c.formaPago||'')}</textarea></div>`,
+    <div class="fld" style="margin-top:12px">
+      <label style="display:flex;align-items:center;justify-content:space-between">Forma de pago (concepto + monto)
+        <button type="button" class="btn ghost sm" onclick="addFPLine()">${ICO.plus} Agregar línea</button>
+      </label>
+      <div id="fpList"></div>
+    </div>`,
     `<button class="btn ghost" onclick="openCobranza('${id}')">Volver</button><button class="btn" onclick="saveCobranza('${id}')">Guardar</button>`);
+  renderFPLines();
 }
+let FP_LINES = [];
+function renderFPLines(){
+  const el = document.getElementById('fpList'); if(!el) return;
+  if(!FP_LINES.length){
+    el.innerHTML = `<div class="help" style="padding:4px 0">Sin líneas. Agregá los conceptos (ej: "Anticipo 40%" / 4000, "Saldo contra entrega" / 6000).</div>`;
+    return;
+  }
+  el.innerHTML = FP_LINES.map((l,i)=>`
+    <div class="frow c2" style="margin-top:8px;align-items:end">
+      <div class="field" style="margin:0"><label>Concepto</label><input class="fpc" data-i="${i}" data-k="concepto" value="${esc(l.concepto)}" placeholder="Anticipo 40%"></div>
+      <div class="field" style="margin:0;max-width:160px"><label>Monto</label><input class="fpc" data-i="${i}" data-k="monto" value="${esc(String(l.monto??''))}" placeholder="0"></div>
+      <button type="button" class="btn ghost sm" style="color:#b0584f;margin-bottom:2px" onclick="delFPLine(${i})">×</button>
+    </div>`).join('');
+  el.querySelectorAll('.fpc').forEach(inp=>{
+    inp.oninput = e=>{ const i=+e.target.dataset.i, k=e.target.dataset.k; FP_LINES[i][k]=e.target.value; };
+  });
+}
+function addFPLine(){ FP_LINES.push({concepto:'', monto:''}); renderFPLines(); }
+function delFPLine(i){ FP_LINES.splice(i,1); renderFPLines(); }
 async function saveCobranza(id){
   try{
+    const fp = FP_LINES
+      .map(l=>({concepto:(l.concepto||'').trim(), monto:(l.monto===''||l.monto==null)?null:num(l.monto)}))
+      .filter(l=>l.concepto||l.monto!=null);
     await SB.updateCobranza(id, {
       razon_social: document.getElementById('cobRazon').value.trim()||null,
       cuit: document.getElementById('cobCuit').value.trim()||null,
       monto_total: num(document.getElementById('cobMonto').value),
       moneda: document.getElementById('cobMoneda').value,
-      forma_pago: document.getElementById('cobForma').value.trim()||null
+      forma_pago: fp
     });
     await reloadDB(); toast('Cobranza actualizada'); openCobranza(id);
   }catch(e){ toast('Error: '+e.message); }
@@ -2483,13 +2576,8 @@ async function savePago(cobId){
       medio: document.getElementById('pagMedio').value,
       notas: document.getElementById('pagNotas').value.trim()||null
     }));
-    // actualizar estado de la cobranza según el nuevo total
-    const c = DB.cobranzas.find(x=>x.id===cobId);
-    if(c){
-      const nuevoPagado = cobPagado(cobId) + monto;
-      const nuevoEstado = nuevoPagado<=0 ? 'pendiente' : (nuevoPagado < (c.montoTotal||0) ? 'parcial' : 'cobrado');
-      await SB.updateCobranza(cobId, {estado:nuevoEstado});
-    }
+    await reloadDB();
+    await recalcEstadoCobranza(cobId);
     await reloadDB(); toast('Pago registrado'); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
@@ -2498,16 +2586,51 @@ async function delPago(pagoId, cobId){
   try{
     await SB.delPago(pagoId);
     await reloadDB();
-    const c = DB.cobranzas.find(x=>x.id===cobId);
-    if(c){
-      const pagado = cobPagado(cobId);
-      const nuevoEstado = pagado<=0 ? 'pendiente' : (pagado < (c.montoTotal||0) ? 'parcial' : 'cobrado');
-      await SB.updateCobranza(cobId, {estado:nuevoEstado});
-      await reloadDB();
-    }
+    await recalcEstadoCobranza(cobId);
+    await reloadDB();
     toast('Pago eliminado'); openCobranza(cobId);
   }catch(e){ toast('Error: '+e.message); }
 }
+// Recalcula y persiste el estado (pendiente/parcial/cobrado) según pagos vs total efectivo.
+// Asume que DB ya fue recargado.
+async function recalcEstadoCobranza(cobId){
+  const c = DB.cobranzas.find(x=>x.id===cobId); if(!c) return;
+  const pagado = cobPagado(cobId);
+  const tot = cobTotal(c);
+  const nuevoEstado = pagado<=0 ? 'pendiente' : (pagado < tot ? 'parcial' : 'cobrado');
+  if(nuevoEstado !== c.estado) await SB.updateCobranza(cobId, {estado:nuevoEstado});
+}
+// --- Adicionales ---
+function addAdicionalModal(cobId){
+  openModal('Agregar adicional', `
+    <div class="fld"><label>Descripción</label><input id="adicDesc" class="inp" placeholder="Ej: flete extra, módulo adicional, ajuste"></div>
+    <div class="fld" style="margin-top:10px"><label>Monto</label><input id="adicMonto" class="inp" placeholder="0"></div>
+    <div class="help" style="margin-top:8px">El adicional se suma al total a cobrar de esta cobranza.</div>`,
+    `<button class="btn ghost" onclick="openCobranza('${cobId}')">Volver</button><button class="btn" onclick="saveAdicional('${cobId}')">Agregar</button>`);
+}
+async function saveAdicional(cobId){
+  try{
+    const monto = num(document.getElementById('adicMonto').value);
+    const desc = document.getElementById('adicDesc').value.trim();
+    if(monto<=0){ toast('Ingresá un monto válido'); return; }
+    if(!desc){ toast('Ingresá una descripción'); return; }
+    await SB.addAdicional(adicionalToRow({ cobranzaId:cobId, descripcion:desc, monto }));
+    await reloadDB();
+    await recalcEstadoCobranza(cobId); // el total subió: puede dejar de estar "cobrado"
+    await reloadDB(); toast('Adicional agregado'); openCobranza(cobId);
+  }catch(e){ toast('Error: '+e.message); }
+}
+async function delAdicional(adicId, cobId){
+  if(!confirm('¿Quitar este adicional?')) return;
+  try{
+    await SB.delAdicional(adicId);
+    await reloadDB();
+    await recalcEstadoCobranza(cobId);
+    await reloadDB(); toast('Adicional eliminado'); openCobranza(cobId);
+  }catch(e){ toast('Error: '+e.message); }
+}
+window.addAdicionalModal=addAdicionalModal; window.saveAdicional=saveAdicional; window.delAdicional=delAdicional;
+window.addFPLine=addFPLine; window.delFPLine=delFPLine;
 window.openCobranza=openCobranza; window.editCobranza=editCobranza; window.saveCobranza=saveCobranza;
 window.addPagoModal=addPagoModal; window.savePago=savePago; window.delPago=delPago;
 
