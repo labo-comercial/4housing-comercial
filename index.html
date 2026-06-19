@@ -124,6 +124,14 @@ tr.ver-child.hide{display:none;}
 .cob-pendiente{background:#f1efe9;color:#9a9080;}
 .cob-parcial{background:#fbf1e0;color:#b3853a;}
 .cob-cobrado{background:#e6f1e3;color:#4f8a53;}
+.un-rental{background:#eaf0e4;color:#5f7a4e;}
+.un-ventas{background:#e7eef3;color:#46708a;}
+.un-ambas{background:#f3eee0;color:#9a7a3a;}
+.cob-kpi{cursor:pointer;padding:6px 9px;border-radius:8px;border:1px solid transparent;transition:background .12s,border-color .12s;}
+.cob-kpi:hover{background:#f6f4ee;}
+.cob-kpi.on{background:#eaf0e4;border-color:#9db98b;}
+.gst-item{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);}
+.gst-tipo{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:2px 8px;border-radius:20px;background:#eef0ea;color:#5f7a4e;white-space:nowrap;}
 .sem{display:inline-block;width:11px;height:11px;border-radius:50%;}
 .sem-verde{background:#4f8a53;}
 .sem-amarillo{background:#e0a93a;}
@@ -528,6 +536,8 @@ const STATES = [
 const stLabel = id => (STATES.find(s=>s.id===id)||STATES[0]).label;
 
 const COMERCIALES = ['Ignacio Sánchez Moser', 'Victoria López Aybar', 'Pablo Spinetto', 'Leandro Seoane', 'Héctor Bermúdez'];
+// Equipo de Cobranzas (Gerencia de Administración y Finanzas). Editá esta lista con los nombres reales.
+const EQUIPO_COBRANZAS = ['Gerencia de Adm. y Finanzas'];
 // Lista única de sectores, usada en todos los desplegables (prospección y clientes)
 const SECTORES = ['Oil & Gas','Minería','Agro','Construcción','Energía','Industria','Logística','Educación','Salud','Seguridad','Organismo Internacional'];
 // Estado de alta como proveedor en plataformas de contratación de cada cliente
@@ -653,6 +663,10 @@ const SB = {
   listAdicionales: () => sbFetch('/adicionales?select=*&order=created_at.desc'),
   addAdicional:    (a) => sbFetch('/adicionales', {method:'POST', body: JSON.stringify(a)}).then(r=>r[0]),
   delAdicional:    (id) => sbFetch('/adicionales?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // ---- Gestiones de cobranza (bitácora del equipo de cobranzas) ----
+  listGestiones: () => sbFetch('/gestiones_cobranza?select=*&order=fecha.desc'),
+  addGestion:    (g) => sbFetch('/gestiones_cobranza', {method:'POST', body: JSON.stringify(g)}).then(r=>r[0]),
+  delGestion:    (id) => sbFetch('/gestiones_cobranza?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
 };
 
 // ---- Mapeo entre el modelo interno (app) y las columnas de Supabase ----
@@ -719,16 +733,21 @@ function rowToOpp(r){
     fechaLimite:r.fecha_limite||'', valor:r.valor_estimado!=null?Number(r.valor_estimado):null,
     moneda:r.moneda||'ARS', comercial:r.comercial_asignado||'',
     cotizacionId:r.cotizacion_id||'', notas:r.notas||'',
+    formaPago:parseFormaPago(r.forma_pago),
     created:r.created_at?Date.parse(r.created_at):Date.now(),
     updated:r.updated_at?Date.parse(r.updated_at):(r.created_at?Date.parse(r.created_at):Date.now())
   };
 }
 function oppToRow(o){
+  const fp = Array.isArray(o.formaPago)
+    ? o.formaPago.filter(l=>l.concepto||l.monto!=null).map(l=>({concepto:(l.concepto||'').trim(), monto:(l.monto===''||l.monto==null)?null:num(l.monto)}))
+    : parseFormaPago(o.formaPago);
   return {
     cliente_id:o.clientId||null, unidad_negocio:o.unidad||'rental', tipo:o.tipo||null,
     titulo:o.title||null, estado:o.state||'nuevo', prioridad:o.prioridad||'media',
     fecha_limite:o.fechaLimite||null, valor_estimado:(o.valor===''||o.valor==null)?null:num(o.valor),
-    moneda:o.moneda||'ARS', comercial_asignado:o.comercial||null, notas:o.notas||null
+    moneda:o.moneda||'ARS', comercial_asignado:o.comercial||null, notas:o.notas||null,
+    forma_pago:fp
   };
 }
 // ---- Actividades ----
@@ -766,6 +785,7 @@ function rowToCobranza(r){
     razonSocial:r.razon_social||'', cuit:r.cuit||'',
     montoBase:r.monto_total!=null?Number(r.monto_total):0, moneda:r.moneda||'USD',
     formaPago:parseFormaPago(r.forma_pago), estado:r.estado||'pendiente', notas:r.notas||'',
+    unidad:r.unidad_negocio||'rental',
     facturaNro:r.factura_nro||'', facturaFecha:r.factura_fecha||'',
     created:r.created_at?Date.parse(r.created_at):Date.now()
   };
@@ -780,6 +800,7 @@ function cobranzaToRow(c){
     monto_total:(c.montoBase===''||c.montoBase==null)?0:num(c.montoBase),
     moneda:c.moneda||'USD', forma_pago:fp,
     estado:c.estado||'pendiente', notas:c.notas||null,
+    unidad_negocio:c.unidad||'rental',
     factura_nro:c.facturaNro||null, factura_fecha:c.facturaFecha||null
   };
 }
@@ -809,7 +830,21 @@ function pagoToRow(p){
     medio:p.medio||null, notas:p.notas||null
   };
 }
-let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], cobranzas:[], pagos:[], adicionales:[], seq:1 };
+// ---- Gestiones de cobranza (bitácora) ----
+function rowToGestion(r){
+  return {
+    id:r.id, cobranzaId:r.cobranza_id||'', fecha:r.fecha||'',
+    tipo:r.tipo||'nota', detalle:r.detalle||'', usuario:r.usuario||'',
+    created:r.created_at?Date.parse(r.created_at):Date.now()
+  };
+}
+function gestionToRow(g){
+  return {
+    cobranza_id:g.cobranzaId||null, fecha:g.fecha||null,
+    tipo:g.tipo||'nota', detalle:g.detalle||null, usuario:g.usuario||null
+  };
+}
+let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], cobranzas:[], pagos:[], adicionales:[], gestiones:[], seq:1 };
 let PROSP_LOADED = false;
 let SB_READY = false;
 
@@ -817,9 +852,10 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 
 // Recarga todo el estado desde Supabase hacia DB
 async function reloadDB(){
-  const [clients, catalog, quotes, seq, opps, acts, cobranzas, pagos, adicionales] = await Promise.all([
+  const [clients, catalog, quotes, seq, opps, acts, cobranzas, pagos, adicionales, gestiones] = await Promise.all([
     SB.listClients(), SB.listCatalog(), SB.listQuotes(), SB.peekSeq(), SB.listOpps(), SB.listActs(),
-    SB.listCobranzas().catch(()=>[]), SB.listPagos().catch(()=>[]), SB.listAdicionales().catch(()=>[])
+    SB.listCobranzas().catch(()=>[]), SB.listPagos().catch(()=>[]), SB.listAdicionales().catch(()=>[]),
+    SB.listGestiones().catch(()=>[])
   ]);
   DB.clients = clients.map(rowToClient);
   DB.catalog = catalog.map(rowToCat);
@@ -830,6 +866,7 @@ async function reloadDB(){
   DB.cobranzas = cobranzas.map(rowToCobranza);
   DB.pagos     = pagos.map(rowToPago);
   DB.adicionales = adicionales.map(rowToAdicional);
+  DB.gestiones = gestiones.map(rowToGestion);
   SB_READY = true;
 }
 
@@ -1382,8 +1419,7 @@ VIEWS.clients = function(){
             <td>${portalCell}</td>
             <td>${altaCell}</td>
             <td class="c">${n}</td>
-            <td class="r"><button class="btn ghost sm" onclick="clientForm('${c.id}')">Editar</button>
-            <button class="btn sm" onclick="newQuote('${c.id}')">Cotizar</button></td>
+            <td class="r" style="white-space:nowrap"><div style="display:inline-flex;gap:6px;justify-content:flex-end"><button class="btn ghost sm" onclick="clientForm('${c.id}')">Editar</button><button class="btn sm" onclick="newQuote('${c.id}')">Cotizar</button></div></td>
           </tr>`;}).join('')}</tbody></table>`
         : emptyState('Sin clientes aún','Agregá tu primer contacto.')}
     </div>`;
@@ -1786,7 +1822,25 @@ function oppFormBody(o){
       <div class="fld"><label>Valor estimado</label><input id="oValor" class="inp" type="number" value="${o.valor!=null?o.valor:''}" placeholder="0"></div>
       <div class="fld"><label>Moneda</label><select id="oMoneda" class="inp">${monedaOpts}</select></div>
     </div>
+    <div class="fld" style="margin-top:12px"><label>Forma de pago <span class="help" style="font-weight:400">(una línea por concepto · opcional el monto con "=", ej: <i>Anticipo 40% = 4000</i>)</span></label><textarea id="oFormaPago" class="inp" rows="3" placeholder="Anticipo 40% = 4000&#10;Saldo contra entrega = 6000">${esc(formaPagoToText(o.formaPago))}</textarea></div>
     <div class="fld" style="margin-top:12px"><label>Notas / Resumen</label><textarea id="oNotas" class="inp" rows="3">${esc(o.notas||'')}</textarea></div>`;
+}
+// Convierte array de líneas {concepto,monto} <-> texto editable (una línea por concepto)
+function formaPagoToText(fp){
+  const arr = parseFormaPago(fp);
+  return arr.map(l=> l.monto!=null ? `${l.concepto} = ${l.monto}` : (l.concepto||'')).join('\n');
+}
+function textToFormaPago(txt){
+  return (txt||'').split('\n').map(s=>s.trim()).filter(Boolean).map(line=>{
+    const i = line.lastIndexOf('=');
+    if(i>=0){
+      const concepto = line.slice(0,i).trim();
+      const montoRaw = line.slice(i+1).trim();
+      const monto = montoRaw==='' ? null : num(montoRaw);
+      return {concepto: concepto||line, monto: isNaN(monto)?null:monto};
+    }
+    return {concepto: line, monto: null};
+  });
 }
 
 function readOppForm(){
@@ -1801,6 +1855,7 @@ function readOppForm(){
     comercial: document.getElementById('oComercial').value.trim(),
     valor: document.getElementById('oValor').value,
     moneda: document.getElementById('oMoneda').value,
+    formaPago: textToFormaPago(document.getElementById('oFormaPago').value),
     notas: document.getElementById('oNotas').value.trim()
   };
 }
@@ -1864,14 +1919,17 @@ async function crearCobranzaDesdeOpp(oppId){
     const cot = o.cotizacionId ? DB.quotes.find(q=>q.id===o.cotizacionId) : null;
     const montoBase  = cot ? quoteTotal(cot) : (o.valor!=null?o.valor:0);
     const moneda     = cot ? (cot.currency||'USD') : (o.moneda||'USD');
-    const formaPago  = (cot && cot.pago) ? [{concepto:cot.pago, monto:null}] : [];
+    // Forma de pago: prioridad a la cargada en la oportunidad; si no, la de la cotización (texto).
+    const formaPago  = (o.formaPago && o.formaPago.length) ? o.formaPago
+                       : ((cot && cot.pago) ? [{concepto:cot.pago, monto:null}] : []);
+    const unidad     = o.unidad||'rental';
     const yaExiste = DB.cobranzas.some(c=> c.oppId===oppId);
     if(!yaExiste){
       await SB.addCobranza(cobranzaToRow({
         ref: o.ref||'', oppId: o.id, clientId: o.clientId||'',
         razonSocial: cli ? cli.name : oppClientName(o),
         cuit: cli ? (cli.cuit||'') : '',
-        montoBase, moneda, formaPago, estado:'pendiente',
+        montoBase, moneda, formaPago, estado:'pendiente', unidad,
         notas: cot ? 'Generada al ganar la venta. Datos tomados de la cotización vinculada.' : 'Generada al ganar la venta. Completar monto y forma de pago.'
       }));
       toast('Venta enviada a Cobranzas');
@@ -1909,7 +1967,7 @@ async function crearCobranzaDesdeQuote(quoteId){
         ref: q.ref||'', oppId: opp?opp.id:'', clientId: q.clientId||'',
         razonSocial: cli ? cli.name : (q.client||''),
         cuit: cli ? (cli.cuit||'') : '',
-        montoBase, moneda, formaPago, estado:'pendiente',
+        montoBase, moneda, formaPago, estado:'pendiente', unidad:'rental',
         notas: 'Generada al ganar la cotización de Rental.'
       }));
       toast('Venta enviada a Cobranzas');
@@ -2525,10 +2583,21 @@ async function convertirProspecto(id){
 /* ================= COBRANZAS ================= */
 const COB_ESTADOS = ['pendiente','parcial','cobrado'];
 const COB_ESTADO_LBL = { pendiente:'Pendiente', parcial:'Parcial', cobrado:'Cobrado' };
+// Tipos de gestión de cobranza (bitácora)
+const GST_TIPOS = ['reclamo','factura_enviada','mail_proveedores','promesa_pago','nota','otro'];
+const GST_TIPO_LBL = {
+  reclamo:'Reclamo', factura_enviada:'Factura enviada', mail_proveedores:'Mail a pago a proveedores',
+  promesa_pago:'Promesa de pago', nota:'Nota', otro:'Otro'
+};
 let cobFiltroEstado = '';
 let cobSearch = '';
 let cobFiltroTramo = '';   // '' | aldia | t1_30 | t31_60 | t61_90 | t90mas
 let cobFiltroMoneda = '';  // '' | USD | ARS
+let cobFiltroUnidad = '';  // '' | rental | ventas
+let cobFiltroVenc   = '';  // '' | porcobrar | vencido | porvencer  (desde KPIs de estado de cuenta)
+const COB_UNIDAD_LBL = { rental:'Rental', ventas:'Ventas', ambas:'Ambas' };
+// Normaliza la unidad de negocio de una cobranza a 'rental' | 'ventas'
+function cobUnidad(c){ return (c.unidad==='ventas')?'ventas':(c.unidad==='ambas'?'ambas':'rental'); }
 
 // Suma de adicionales de una cobranza
 function cobAdicionales(cobId){ return DB.adicionales.filter(a=>a.cobranzaId===cobId).reduce((s,a)=>s+(a.monto||0),0); }
@@ -2578,6 +2647,89 @@ function cobSemaforo(c){
   if(d<=30) return 'amarillo';
   return 'rojo';
 }
+// Clasifica el saldo pendiente: 'vencido' | 'porvencer' | null (sin saldo)
+function cobClaseVenc(c){
+  const saldo = cobSaldo(c);
+  if(saldo<=0) return null;
+  const d = cobDiasVencido(c);
+  if(d!=null && d>0) return 'vencido';
+  return 'porvencer';
+}
+// Objetivo de cobro del mes: 95% del MONTO de las facturas que vencen en el mes en curso,
+// por moneda. "Vence en el mes" = fecha de emisión dentro del mes actual (la fecha de factura
+// es la base de ageing/vencimiento que maneja Cobranzas). Devuelve {USD:{obj,cobrado}, ARS:{...}}.
+function objetivoCobroMes(){
+  const ini = new Date(); ini.setDate(1); ini.setHours(0,0,0,0);
+  const fin = new Date(ini); fin.setMonth(fin.getMonth()+1); // primer día del mes siguiente
+  const res = { USD:{base:0,obj:0,cobrado:0}, ARS:{base:0,obj:0,cobrado:0} };
+  DB.cobranzas.forEach(c=>{
+    const m = (c.moneda==='ARS')?'ARS':'USD';
+    // facturas que vencen este mes (por fecha de emisión cargada)
+    if(c.facturaFecha){
+      const f = new Date(c.facturaFecha+'T00:00:00').getTime();
+      if(f>=ini.getTime() && f<fin.getTime()) res[m].base += cobTotal(c);
+    }
+  });
+  // cobrado en el mes (pagos con fecha dentro del mes), por moneda
+  DB.cobranzas.forEach(c=>{
+    const m = (c.moneda==='ARS')?'ARS':'USD';
+    DB.pagos.filter(p=>p.cobranzaId===c.id).forEach(p=>{
+      if(p.fecha){ const pf=new Date(p.fecha+'T00:00:00').getTime(); if(pf>=ini.getTime() && pf<fin.getTime()) res[m].cobrado += (p.monto||0); }
+    });
+  });
+  res.USD.obj = res.USD.base*0.95;
+  res.ARS.obj = res.ARS.base*0.95;
+  return res;
+}
+// Gestiones de una cobranza, más recientes primero
+function cobGestiones(cobId){ return DB.gestiones.filter(g=>g.cobranzaId===cobId).sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||'') || b.created-a.created); }
+
+// --- Gráficos SVG ---
+// Dona de composición del saldo: por vencer (verde) + vencido (rojo). El centro muestra el total por cobrar.
+function donaSaldoSVG(sym, porvencer, vencido){
+  const total = porvencer + vencido;
+  const R=52, r=34, cx=64, cy=64;
+  if(total<=0){
+    return `<svg viewBox="0 0 128 128" width="128" height="128" role="img">
+      <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#e7e3d6" stroke-width="${R-r}"/>
+      <text x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="#8a8576">sin saldo</text>
+    </svg>`;
+  }
+  const segs = [
+    {val:porvencer, col:'#4f8a53'},
+    {val:vencido,   col:'#b0584f'},
+  ];
+  const C = 2*Math.PI*R;
+  let offset=0;
+  const arcs = segs.filter(s=>s.val>0).map(s=>{
+    const len = C*(s.val/total);
+    const dash = `${len} ${C-len}`;
+    const el = `<circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="${s.col}" stroke-width="${R-r}" stroke-dasharray="${dash}" stroke-dashoffset="${-offset}" transform="rotate(-90 ${cx} ${cy})"/>`;
+    offset += len;
+    return el;
+  }).join('');
+  return `<svg viewBox="0 0 128 128" width="128" height="128" role="img">
+    <circle cx="${cx}" cy="${cy}" r="${R}" fill="none" stroke="#eee9dc" stroke-width="${R-r}"/>
+    ${arcs}
+    <text x="${cx}" y="${cy-5}" text-anchor="middle" font-size="8.5" fill="#8a8576">Por cobrar</text>
+    <text x="${cx}" y="${cy+9}" text-anchor="middle" font-size="12" font-weight="700" fill="#37432c">${sym} ${fmt(total)}</text>
+  </svg>`;
+}
+// Barra de cobrado del mes vs objetivo (95%). Roja si está por debajo, verde si lo alcanza/supera.
+function barraObjetivoSVG(sym, cobrado, objetivo){
+  const W=240, H=26;
+  const alcanzado = objetivo>0 && cobrado>=objetivo;
+  const col = alcanzado ? '#4f8a53' : '#b0584f';
+  // ancho de la barra de cobrado proporcional al máximo(obj, cobrado) para que siempre se vea
+  const max = Math.max(objetivo, cobrado, 1);
+  const wCob = Math.round(W*(cobrado/max));
+  const xObj = Math.round(W*(objetivo/max));
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" role="img">
+    <rect x="0" y="4" width="${W}" height="${H-8}" rx="4" fill="#eee9dc"/>
+    <rect x="0" y="4" width="${wCob}" height="${H-8}" rx="4" fill="${col}"/>
+    ${objetivo>0?`<line x1="${xObj}" y1="0" x2="${xObj}" y2="${H}" stroke="#37432c" stroke-width="2" stroke-dasharray="3 2"/>`:''}
+  </svg>`;
+}
 
 VIEWS.cobranzas = function(){
   setHeader('Cobranzas','Seguimiento de ventas ganadas y estado de cuenta');
@@ -2589,6 +2741,8 @@ VIEWS.cobranzas = function(){
   }
   if(cobFiltroEstado) list = list.filter(c => cobEstadoCalc(c)===cobFiltroEstado);
   if(cobFiltroMoneda) list = list.filter(c => (c.moneda==='ARS'?'ARS':'USD')===cobFiltroMoneda);
+  if(cobFiltroUnidad) list = list.filter(c => cobUnidad(c)===cobFiltroUnidad || cobUnidad(c)==='ambas');
+  if(cobFiltroVenc)   list = list.filter(c => cobClaseVenc(c)===cobFiltroVenc);
   if(cobFiltroTramo)  list = list.filter(c => { const t=cobTramo(c); return t && t.key===cobFiltroTramo && cobSaldo(c)>0; });
   // Orden: más vencido primero (prioridad de gestión), las sin fecha al final
   list.sort((a,b)=>{
@@ -2599,13 +2753,15 @@ VIEWS.cobranzas = function(){
     return db-da;
   });
 
-  // Estado de cuenta + KPIs de cabecera, separados por moneda
+  // Estado de cuenta + KPIs de cabecera, separados por moneda.
+  // Respeta el filtro de unidad de negocio si está activo.
+  const enUnidad = c => !cobFiltroUnidad || cobUnidad(c)===cobFiltroUnidad || cobUnidad(c)==='ambas';
   const monedas = ['USD','ARS'];
   const cuenta = {};
   monedas.forEach(m => cuenta[m] = { total:0, cobrado:0, pendiente:0, vencido:0, porvencer:0, cobradoMes:0, n:0 });
   // Inicio de mes para "cobrado en el mes"
   const inicioMes = new Date(); inicioMes.setDate(1); inicioMes.setHours(0,0,0,0);
-  DB.cobranzas.forEach(c=>{
+  DB.cobranzas.filter(enUnidad).forEach(c=>{
     const m = (c.moneda==='ARS')?'ARS':'USD';
     const saldo = cobSaldo(c);
     cuenta[m].total += cobTotal(c);
@@ -2623,12 +2779,13 @@ VIEWS.cobranzas = function(){
     });
   });
   const sym = m => (m==='ARS')?'$':'USD';
+  const objCobro = objetivoCobroMes();
 
   // Ageing por tramos (solo cobranzas con saldo y con fecha de factura), por moneda activa
   const monedaAgeing = cobFiltroMoneda || (cuenta.USD.n>=cuenta.ARS.n?'USD':'ARS');
   const ageing = {}; AGEING_TRAMOS.forEach(t=> ageing[t.key]={monto:0, n:0});
   let sinFecha = {monto:0, n:0};
-  DB.cobranzas.forEach(c=>{
+  DB.cobranzas.filter(enUnidad).forEach(c=>{
     const m = (c.moneda==='ARS')?'ARS':'USD';
     if(m!==monedaAgeing) return;
     const saldo = cobSaldo(c);
@@ -2650,45 +2807,73 @@ VIEWS.cobranzas = function(){
     </div>`;
   }).join('');
 
-  const cuentaCards = monedas.filter(m=>cuenta[m].n>0).map(m=>`
-    <div class="card"><div class="card-b">
-      <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:10px">Estado de cuenta · ${m}</div>
-      <div style="display:flex;gap:18px;flex-wrap:wrap">
-        <div><div class="help">Por cobrar</div><div style="font-size:19px;font-weight:700;color:#b3853a">${sym(m)} ${fmt(cuenta[m].pendiente)}</div></div>
-        <div><div class="help">Vencido</div><div style="font-size:19px;font-weight:700;color:#b0584f">${sym(m)} ${fmt(cuenta[m].vencido)}</div></div>
-        <div><div class="help">Por vencer</div><div style="font-size:19px;font-weight:700;color:#4f8a53">${sym(m)} ${fmt(cuenta[m].porvencer)}</div></div>
-        <div><div class="help">Cobrado en el mes</div><div style="font-size:19px;font-weight:700;color:#5f7a4e">${sym(m)} ${fmt(cuenta[m].cobradoMes)}</div></div>
+  const cuentaCards = monedas.filter(m=>cuenta[m].n>0).map(m=>{
+    const oc = objCobro[m] || {base:0,obj:0,cobrado:0};
+    const alcanzado = oc.obj>0 && oc.cobrado>=oc.obj;
+    const pctObj = oc.obj>0 ? Math.round(100*oc.cobrado/oc.obj) : 0;
+    const kpi = (key, lbl, val, col) => {
+      const activo = cobFiltroVenc===key;
+      return `<div class="cob-kpi ${activo?'on':''}" onclick="toggleCobVenc('${key}')" title="Filtrar ${lbl}">
+        <div class="help">${lbl}</div>
+        <div style="font-size:18px;font-weight:700;color:${col}">${sym(m)} ${fmt(val)}</div>
+      </div>`;
+    };
+    return `<div class="card"><div class="card-b">
+      <div style="font-size:13px;font-weight:700;color:#37432c;margin-bottom:12px">Estado de cuenta · ${m}</div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <div style="flex:0 0 auto">${donaSaldoSVG(sym(m), cuenta[m].porvencer, cuenta[m].vencido)}</div>
+        <div style="flex:1 1 140px;display:flex;flex-direction:column;gap:8px">
+          ${kpi('porcobrar','Por cobrar', cuenta[m].pendiente, '#b3853a')}
+          ${kpi('vencido','Vencido', cuenta[m].vencido, '#b0584f')}
+          ${kpi('porvencer','Por vencer', cuenta[m].porvencer, '#4f8a53')}
+        </div>
       </div>
-    </div></div>`).join('');
+      <div style="margin-top:16px;border-top:1px solid var(--line);padding-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+          <div class="help">Cobrado en el mes vs objetivo</div>
+          <div style="font-size:12px;font-weight:700;color:${alcanzado?'#4f8a53':'#b0584f'}">${pctObj}%</div>
+        </div>
+        ${barraObjetivoSVG(sym(m), oc.cobrado, oc.obj)}
+        <div style="display:flex;justify-content:space-between;margin-top:6px">
+          <span style="font-size:12px;color:#37432c">Cobrado: <strong>${sym(m)} ${fmt(oc.cobrado)}</strong></span>
+          <span style="font-size:12px;color:var(--muted)">Objetivo (95%): <strong>${sym(m)} ${fmt(oc.obj)}</strong></span>
+        </div>
+      </div>
+    </div></div>`;
+  }).join('');
 
   const estadoFiltroOpts = `<option value="">Todos los estados</option>`+
     COB_ESTADOS.map(s=>`<option value="${s}" ${s===cobFiltroEstado?'selected':''}>${COB_ESTADO_LBL[s]}</option>`).join('');
   const monedaFiltroOpts = `<option value="">Todas las monedas</option>`+
     ['USD','ARS'].map(m=>`<option value="${m}" ${m===cobFiltroMoneda?'selected':''}>${m}</option>`).join('');
+  const unidadFiltroOpts = `<option value="">Todas las unidades</option>`+
+    [['rental','Rental'],['ventas','Ventas']].map(([v,l])=>`<option value="${v}" ${v===cobFiltroUnidad?'selected':''}>${l}</option>`).join('');
+  const hayFiltro = cobFiltroTramo||cobFiltroEstado||cobFiltroMoneda||cobFiltroUnidad||cobFiltroVenc;
 
   C().innerHTML = `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;margin-bottom:16px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-bottom:16px;align-items:stretch">
       ${cuentaCards || '<div class="help">Todavía no hay ventas ganadas en cobranzas.</div>'}
     </div>
     ${DB.cobranzas.length ? `<div class="card" style="margin-bottom:16px"><div class="card-b">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="font-size:13px;font-weight:700;color:#37432c">Ageing de saldos · ${monedaAgeing} <span class="help" style="font-weight:400">· días desde emisión de factura · tocá para filtrar</span></div>
-        ${cobFiltroTramo?`<button class="btn ghost sm" onclick="toggleCobTramo('${cobFiltroTramo}')">Quitar filtro</button>`:''}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">
+        <div style="font-size:13px;font-weight:700;color:#37432c">Ageing de saldos · ${monedaAgeing}${cobFiltroUnidad?` · ${COB_UNIDAD_LBL[cobFiltroUnidad]}`:''} <span class="help" style="font-weight:400">· días desde emisión de factura · tocá para filtrar</span></div>
+        ${cobFiltroTramo?`<button class="btn ghost sm" onclick="toggleCobTramo('${cobFiltroTramo}')">Quitar filtro de tramo</button>`:''}
       </div>
       <div class="age-chart">${ageingBars}</div>
       ${sinFecha.n?`<div class="help" style="margin-top:10px">${sinFecha.n} cobranza(s) con saldo sin fecha de factura cargada (${sym(monedaAgeing)} ${fmt(sinFecha.monto)}) — no entran al ageing.</div>`:''}
     </div></div>` : ''}
     <div class="opp-filters">
       <input id="cobSearch" class="inp" style="max-width:240px" placeholder="Buscar ref, cliente, CUIT, factura…" value="${esc(cobSearch)}">
+      <select id="cobUnidad">${unidadFiltroOpts}</select>
       <select id="cobEstado">${estadoFiltroOpts}</select>
       <select id="cobMoneda">${monedaFiltroOpts}</select>
-      ${(cobFiltroTramo||cobFiltroEstado||cobFiltroMoneda)?`<button class="btn ghost sm" onclick="limpiarCobFiltros()">Limpiar filtros</button>`:''}
+      ${hayFiltro?`<button class="btn ghost sm" onclick="limpiarCobFiltros()">Limpiar filtros</button>`:''}
       <span class="help" style="margin-left:auto">${list.length} ${list.length===1?'cobranza':'cobranzas'}</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       ${list.length ? `<table class="grid">
         <thead><tr>
-          <th></th><th>Ref.</th><th>Cliente</th><th>Factura</th><th class="c">Días</th>
+          <th></th><th>Ref.</th><th>Cliente</th><th>Unidad</th><th>Factura</th><th class="c">Días</th>
           <th class="r">Total</th><th class="r">Saldo</th><th>Estado</th>
         </tr></thead>
         <tbody>${list.map(rowCobranza).join('')}</tbody></table>`
@@ -2697,13 +2882,15 @@ VIEWS.cobranzas = function(){
 
   const s=document.getElementById('cobSearch');
   s.oninput=()=>{ cobSearch=s.value; const p=s.selectionStart; VIEWS.cobranzas(); const n=document.getElementById('cobSearch'); n.focus(); n.setSelectionRange(p,p); };
+  document.getElementById('cobUnidad').onchange=ev=>{ cobFiltroUnidad=ev.target.value; VIEWS.cobranzas(); };
   document.getElementById('cobEstado').onchange=ev=>{ cobFiltroEstado=ev.target.value; VIEWS.cobranzas(); };
   document.getElementById('cobMoneda').onchange=ev=>{ cobFiltroMoneda=ev.target.value; VIEWS.cobranzas(); };
   C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openCobranza(tr.dataset.id));
 };
 function toggleCobTramo(k){ cobFiltroTramo = (cobFiltroTramo===k)?'':k; VIEWS.cobranzas(); }
-function limpiarCobFiltros(){ cobFiltroTramo=''; cobFiltroEstado=''; cobFiltroMoneda=''; VIEWS.cobranzas(); }
-window.toggleCobTramo = toggleCobTramo; window.limpiarCobFiltros = limpiarCobFiltros;
+function toggleCobVenc(k){ cobFiltroVenc = (cobFiltroVenc===k)?'':k; VIEWS.cobranzas(); }
+function limpiarCobFiltros(){ cobFiltroTramo=''; cobFiltroEstado=''; cobFiltroMoneda=''; cobFiltroUnidad=''; cobFiltroVenc=''; VIEWS.cobranzas(); }
+window.toggleCobTramo = toggleCobTramo; window.toggleCobVenc = toggleCobVenc; window.limpiarCobFiltros = limpiarCobFiltros;
 
 function rowCobranza(c){
   const sym = (c.moneda==='ARS')?'$':'USD';
@@ -2719,6 +2906,7 @@ function rowCobranza(c){
     <td><span class="sem sem-${sem}" title="${sem}"></span></td>
     <td><strong>${esc(c.ref||'—')}</strong></td>
     <td>${esc(upperName(c.razonSocial)||'—')}<br><span class="help">${esc(c.cuit||'')}</span></td>
+    <td><span class="badge un-${cobUnidad(c)}">${COB_UNIDAD_LBL[cobUnidad(c)]||cobUnidad(c)}</span></td>
     <td style="font-size:12px">${facturaTxt}</td>
     <td class="c" style="font-weight:600;color:${sem==='rojo'?'#b0584f':(sem==='amarillo'?'#b3853a':'#37432c')}">${diasTxt}</td>
     <td class="r">${sym} ${fmt(cobTotal(c))}</td>
@@ -2732,6 +2920,7 @@ function openCobranza(id){
   const sym = (c.moneda==='ARS')?'$':'USD';
   const pagos = DB.pagos.filter(p=>p.cobranzaId===id).sort((a,b)=> (b.fecha||'').localeCompare(a.fecha||''));
   const adics = DB.adicionales.filter(a=>a.cobranzaId===id).sort((a,b)=> a.created-b.created);
+  const gestiones = cobGestiones(id);
   const pag = cobPagado(id);
   const total = cobTotal(c);
   const saldo = cobSaldo(c);
@@ -2758,6 +2947,7 @@ function openCobranza(id){
       <div class="fld"><label>Referencia</label><div class="val">${esc(c.ref||'—')}</div></div>
       <div class="fld"><label>Cliente / Razón social</label><div class="val">${esc(c.razonSocial||'—')}</div></div>
       <div class="fld"><label>CUIT</label><div class="val">${esc(c.cuit||'—')}</div></div>
+      <div class="fld"><label>Unidad de negocio</label><div class="val"><span class="badge un-${cobUnidad(c)}">${COB_UNIDAD_LBL[cobUnidad(c)]||cobUnidad(c)}</span></div></div>
       <div class="fld"><label>Monto base</label><div class="val">${sym} ${fmt(c.montoBase)}</div></div>
       <div class="fld"><label>Adicionales</label><div class="val">${sym} ${fmt(cobAdicionales(id))}</div></div>
       <div class="fld"><label>Total a cobrar</label><div class="val" style="font-weight:700">${sym} ${fmt(total)}</div></div>
@@ -2791,11 +2981,31 @@ function openCobranza(id){
           <button class="btn ghost sm" style="color:#b0584f" onclick="delPago('${p.id}','${id}')">Quitar</button>
         </div>`).join('')
       : '<div class="help">Sin pagos registrados. Cargá los cobros a medida que entran.</div>'}
+    </div>
+
+    <div style="margin-top:18px;display:flex;justify-content:space-between;align-items:center">
+      <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Bitácora de gestión (${gestiones.length})</label>
+      <button class="btn ghost sm" onclick="addGestionModal('${id}')">${ICO.plus} Registrar gestión</button>
+    </div>
+    <div style="margin-top:6px">
+      ${gestiones.length ? gestiones.map(g=>`
+        <div class="gst-item">
+          <div style="flex:1">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span class="gst-tipo">${GST_TIPO_LBL[g.tipo]||g.tipo}</span>
+              <span class="meta">${g.fecha?new Date(g.fecha+'T00:00:00').toLocaleDateString('es-AR'):'—'}${g.usuario?' · '+esc(g.usuario):''}</span>
+            </div>
+            ${g.detalle?`<div style="margin-top:4px;color:#37432c;font-size:13px">${esc(g.detalle)}</div>`:''}
+          </div>
+          <button class="btn ghost sm" style="color:#b0584f" onclick="delGestion('${g.id}','${id}')">Quitar</button>
+        </div>`).join('')
+      : '<div class="help">Sin gestiones registradas. Anotá cada acción: reclamos, envío de factura, mails a pago a proveedores, promesas de pago, etc.</div>'}
     </div>`;
 
   const foot = `
     <button class="btn ghost" onclick="closeModal()">Cerrar</button>
     <button class="btn ghost" onclick="editCobranza('${id}')">Editar datos</button>
+    <button class="btn ghost" onclick="addGestionModal('${id}')">${ICO.plus} Gestión</button>
     <button class="btn ghost" onclick="addAdicionalModal('${id}')">${ICO.plus} Adicional</button>
     <button class="btn" onclick="addPagoModal('${id}')">${ICO.plus} Registrar pago</button>`;
   openModal('Cobranza · '+(c.ref||''), body, foot);
@@ -2804,12 +3014,14 @@ function openCobranza(id){
 function editCobranza(id){
   const c = DB.cobranzas.find(x=>x.id===id); if(!c) return;
   const monedaOpts = [['USD','USD'],['ARS','ARS']].map(([v,l])=>`<option value="${v}" ${v===c.moneda?'selected':''}>${l}</option>`).join('');
+  const unidadOpts = [['rental','Rental'],['ventas','Ventas'],['ambas','Ambas']].map(([v,l])=>`<option value="${v}" ${v===cobUnidad(c)?'selected':''}>${l}</option>`).join('');
   // copia de trabajo de las líneas de forma de pago
   FP_LINES = (c.formaPago && c.formaPago.length) ? c.formaPago.map(l=>({concepto:l.concepto||'', monto:l.monto!=null?l.monto:''})) : [];
   openModal('Editar cobranza', `
     <div class="opp-detail-grid">
       <div class="fld"><label>Razón social</label><input id="cobRazon" class="inp" value="${esc(c.razonSocial||'')}"></div>
       <div class="fld"><label>CUIT</label><input id="cobCuit" class="inp" value="${esc(c.cuit||'')}"></div>
+      <div class="fld"><label>Unidad de negocio</label><select id="cobUnidadEd" class="inp">${unidadOpts}</select></div>
       <div class="fld"><label>Monto base</label><input id="cobMonto" class="inp" value="${esc(String(c.montoBase||0))}"></div>
       <div class="fld"><label>Moneda</label><select id="cobMoneda" class="inp">${monedaOpts}</select></div>
       <div class="fld"><label>Nº de factura <span class="help" style="font-weight:400">(del ERP)</span></label><input id="cobFactNro" class="inp" value="${esc(c.facturaNro||'')}" placeholder="A-0001-00012345"></div>
@@ -2853,6 +3065,7 @@ async function saveCobranza(id){
       cuit: document.getElementById('cobCuit').value.trim()||null,
       monto_total: num(document.getElementById('cobMonto').value),
       moneda: document.getElementById('cobMoneda').value,
+      unidad_negocio: document.getElementById('cobUnidadEd').value,
       forma_pago: fp,
       factura_nro: document.getElementById('cobFactNro').value.trim()||null,
       factura_fecha: document.getElementById('cobFactFecha').value||null
@@ -2941,6 +3154,51 @@ window.addAdicionalModal=addAdicionalModal; window.saveAdicional=saveAdicional; 
 window.addFPLine=addFPLine; window.delFPLine=delFPLine;
 window.openCobranza=openCobranza; window.editCobranza=editCobranza; window.saveCobranza=saveCobranza;
 window.addPagoModal=addPagoModal; window.savePago=savePago; window.delPago=delPago;
+
+// --- Bitácora de gestión de cobranza ---
+// "Usuario" = quién registra la gestión. No hay sesión de usuario embebida en este archivo,
+// así que se elige de una lista (equipo de cobranzas + comercial) y se recuerda el último.
+function gestionUsuario(){ try{ return sessionStorage.getItem('cobGestionUser')||''; }catch(_){ return ''; } }
+function gestionUsuarioOpts(sel){
+  const nombres = [...EQUIPO_COBRANZAS, ...COMERCIALES];
+  return `<option value="">— Seleccionar —</option>`+
+    nombres.map(n=>`<option value="${esc(n)}" ${n===sel?'selected':''}>${esc(n)}</option>`).join('');
+}
+function addGestionModal(cobId){
+  const today = new Date().toISOString().slice(0,10);
+  const tipoOpts = GST_TIPOS.map(t=>`<option value="${t}">${GST_TIPO_LBL[t]}</option>`).join('');
+  openModal('Registrar gestión', `
+    <div class="opp-detail-grid">
+      <div class="fld"><label>Fecha</label><input id="gstFecha" class="inp" type="date" value="${today}"></div>
+      <div class="fld"><label>Tipo de gestión</label><select id="gstTipo" class="inp">${tipoOpts}</select></div>
+      <div class="fld"><label>Registrado por</label><select id="gstUser" class="inp">${gestionUsuarioOpts(gestionUsuario())}</select></div>
+    </div>
+    <div class="fld" style="margin-top:10px"><label>Detalle</label><textarea id="gstDetalle" class="inp" rows="3" placeholder="Ej: Se reclamó por mail a Tesorería. Prometen pago para el viernes."></textarea></div>`,
+    `<button class="btn ghost" onclick="openCobranza('${cobId}')">Volver</button><button class="btn" onclick="saveGestion('${cobId}')">Registrar</button>`);
+}
+async function saveGestion(cobId){
+  try{
+    const detalle = document.getElementById('gstDetalle').value.trim();
+    const tipo = document.getElementById('gstTipo').value;
+    const usuario = document.getElementById('gstUser').value.trim();
+    if(!detalle && tipo==='nota'){ toast('Escribí el detalle de la gestión'); return; }
+    try{ if(usuario) sessionStorage.setItem('cobGestionUser', usuario); }catch(_){ }
+    await SB.addGestion(gestionToRow({
+      cobranzaId: cobId,
+      fecha: document.getElementById('gstFecha').value||null,
+      tipo, detalle: detalle||null, usuario: usuario||null
+    }));
+    await reloadDB(); toast('Gestión registrada'); openCobranza(cobId);
+  }catch(e){ toast('Error: '+e.message); }
+}
+async function delGestion(gestId, cobId){
+  if(!confirm('¿Quitar esta gestión de la bitácora?')) return;
+  try{
+    await SB.delGestion(gestId);
+    await reloadDB(); toast('Gestión eliminada'); openCobranza(cobId);
+  }catch(e){ toast('Error: '+e.message); }
+}
+window.addGestionModal=addGestionModal; window.saveGestion=saveGestion; window.delGestion=delGestion;
 
 /* ================= QUOTE EDITOR ================= */
 let CUR=null; // working quote
