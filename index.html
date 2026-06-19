@@ -259,9 +259,9 @@ textarea.inp{resize:vertical;min-height:60px;}
 .itemline .top select{flex:1;min-width:0;max-width:100%;width:100%;text-overflow:ellipsis;}
 .itemline .top .del{background:none;border:1px solid var(--line);border-radius:8px;width:36px;color:#aaa;font-size:16px;flex:none;}
 .itemline .top .del:hover{color:#b4554e;border-color:#e8cfcc;}
-.itemline .nums{display:grid;grid-template-columns:1fr 60px 70px;gap:8px;}
+.itemline .nums{display:grid;grid-template-columns:1fr 60px 110px minmax(140px,1.4fr);gap:8px;align-items:start;}
 .itemline .nums label{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px;}
-.itemline .nums input{width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff;}
+.itemline .nums input,.itemline .nums select{width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff;box-sizing:border-box;}
 .itemline .subline{text-align:right;font-size:12px;color:var(--olive-deep);font-weight:700;margin-top:7px;}
 
 .help{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:4px;}
@@ -423,6 +423,7 @@ textarea.inp{resize:vertical;min-height:60px;}
   .prev-scale{transform-origin:top left;}
   .modal{max-width:100%;}
   .itemline .nums{grid-template-columns:1fr 1fr;}
+  .itemline .nums .i-periodo-wrap{grid-column:1 / -1;}
 }
 @media(max-width:420px){
   .kpi-grid{grid-template-columns:1fr;}
@@ -1191,7 +1192,7 @@ VIEWS.quotes = function(){
   if(quoteSearch){
     const q=quoteSearch.toLowerCase();
     const hay = x => {
-      const items=(x.items||[]).map(it=>`${it.detail||''} ${it.qty||''} ${it.plazo||''} ${it.price||''}`).join(' ');
+      const items=(x.items||[]).map(it=>`${it.detail||''} ${it.qty||''} ${it.plazo||''} ${it.periodo||''} ${it.price||''}`).join(' ');
       return (`${x.client||''} ${x.ref||''} ${x.attn||''} ${x.email||''} ${x.phone||''} ${x.comercial||''} ${x.title||''} `+
         `${x.pago||''} ${x.validez||''} ${x.entrega||''} ${x.minimo||''} ${x.nota1||''} ${x.nota2||''} ${x.ivanote||''} `+
         `${stLabel(x.state)||''} ${items}`).toLowerCase().includes(q);
@@ -1362,7 +1363,7 @@ async function setQuoteState(id, state){
     VIEWS.quotes();
   }catch(e){ toast('Error: '+e.message); }
 }
-function quoteSubtotal(x){ return (x.items||[]).reduce((a,it)=>a + num(it.price)*num(it.qty)*(num(it.plazo)||1),0); }
+function quoteSubtotal(x){ return (x.items||[]).reduce((a,it)=>a + num(it.price)*num(it.qty)*itemMeses(it),0); }
 // Monto del descuento según tipo: 'pct' (porcentaje del subtotal) o 'monto' (fijo). Sin descuento => 0.
 function quoteDescuento(x){
   const sub = quoteSubtotal(x);
@@ -1373,6 +1374,47 @@ function quoteDescuento(x){
 }
 function quoteTotal(x){ return quoteSubtotal(x) - quoteDescuento(x); }
 function num(s){ return parseFloat(String(s).replace(/[^\d.,-]/g,'').replace(',','.'))||0; }
+// --- Período de alquiler en formato MMMAA-MMMAA (ej. JUN26-AGO26) ---
+const MESES_ABR=['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
+// Parsea "JUN26" -> {m:6, y:2026} o null si es inválido.
+function parseMesTok(t){
+  const mm=String(t||'').trim().toUpperCase().match(/^([A-Z]{3})\s*(\d{2})$/);
+  if(!mm) return null;
+  const idx=MESES_ABR.indexOf(mm[1]); if(idx<0) return null;
+  return { m: idx+1, y: 2000 + parseInt(mm[2],10) };
+}
+// Devuelve la cantidad de meses (inclusive) de un período "JUN26-AGO26", o null si es inválido.
+function mesesDePeriodo(s){
+  const parts=String(s||'').trim().toUpperCase().split('-');
+  if(parts.length!==2) return null;
+  const a=parseMesTok(parts[0]), b=parseMesTok(parts[1]);
+  if(!a||!b) return null;
+  const diff=(b.y - a.y)*12 + (b.m - a.m);
+  if(diff<0) return null;
+  return diff + 1;
+}
+// Normaliza para mostrar: "jun26-ago26" -> "JUN26-AGO26"
+function fmtPeriodo(s){
+  const parts=String(s||'').trim().toUpperCase().split('-');
+  if(parts.length!==2) return String(s||'');
+  const a=parseMesTok(parts[0]), b=parseMesTok(parts[1]);
+  if(!a||!b) return String(s||'').toUpperCase();
+  return `${MESES_ABR[a.m-1]}${String(a.y).slice(-2)}-${MESES_ABR[b.m-1]}${String(b.y).slice(-2)}`;
+}
+// Cantidad de meses efectiva de un ítem: período (si válido) o plazo numérico, mínimo 1.
+function itemMeses(it){
+  if(it && it.periodo){ const mp=mesesDePeriodo(it.periodo); if(mp) return mp; }
+  return num(it&&it.plazo)||1;
+}
+// Texto a mostrar en la columna PLAZO del documento.
+function itemPlazoTexto(it){
+  if(it && it.periodo && mesesDePeriodo(it.periodo)) return fmtPeriodo(it.periodo);
+  return esc(it&&it.plazo)||'—';
+}
+// ¿El ítem tiene algo cargado en la columna plazo/período?
+function itemTienePlazo(it){
+  return (it && it.periodo && mesesDePeriodo(it.periodo)) || num(it&&it.plazo)>0;
+}
 function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 /* ================= CLIENTS ================= */
@@ -3372,7 +3414,7 @@ async function newQuote(clientId){
     title:'OFERTA ECONÓMICA', dateISO:todayISO(),
     clientId: c?c.id:'', client:c?c.name:'', attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:'', version:1,
-    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'' }],
+    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'', periodo:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
@@ -3399,7 +3441,7 @@ async function cotizarOportunidad(oppId){
     clientId: c?c.id:(o.clientId||''), client:c?c.name:oppClientName(o),
     attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:o.comercial||'', version:1,
-    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'' }],
+    items:[{ catId:'', detail:'', price:'', qty:1, plazo:'', periodo:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
@@ -3593,9 +3635,11 @@ function renderItems(){
       <div class="nums">
         <div><label>Unitario (${esc(CUR.currency)})</label><input class="i-price" type="number" value="${it.price}"></div>
         <div><label>Cant.</label><input class="i-qty" type="number" value="${it.qty}"></div>
-        <div><label>Plazo (meses)</label><input class="i-plazo" type="number" value="${it.plazo}"></div>
+        <div><label>Modo</label><select class="i-modo"><option value="meses"${it.periodo?'':' selected'}>Plazo (meses)</option><option value="periodo"${it.periodo?' selected':''}>Período</option></select></div>
+        <div class="i-plazo-wrap"${it.periodo?' style="display:none"':''}><label>Plazo (meses)</label><input class="i-plazo" type="number" value="${it.plazo}"></div>
+        <div class="i-periodo-wrap"${it.periodo?'':' style="display:none"'}><label>Período (MMMAA-MMMAA)</label><input class="i-periodo" type="text" placeholder="JUN26-AGO26" value="${esc(it.periodo||'')}"><div class="i-periodo-msg" style="font-size:11px;margin-top:3px;line-height:1.2"></div></div>
       </div>
-      <div class="subline">Subtotal: ${esc(CUR.currency)} ${fmt(num(it.price)*num(it.qty)*(num(it.plazo)||1))}</div>
+      <div class="subline">Subtotal: ${esc(CUR.currency)} ${fmt(num(it.price)*num(it.qty)*itemMeses(it))}</div>
     </div>`).join('');
   el.querySelectorAll('.itemline').forEach(line=>{
     const i=+line.dataset.i, it=CUR.items[i];
@@ -3606,27 +3650,49 @@ function renderItems(){
     line.querySelector('.i-price').oninput=e=>{ it.price=e.target.value; sub(line,it); renderDoc(); };
     line.querySelector('.i-qty').oninput=e=>{ it.qty=e.target.value; sub(line,it); renderDoc(); };
     line.querySelector('.i-plazo').oninput=e=>{ it.plazo=e.target.value; sub(line,it); renderDoc(); };
+    const modoSel=line.querySelector('.i-modo'),
+          plazoWrap=line.querySelector('.i-plazo-wrap'),
+          periodoWrap=line.querySelector('.i-periodo-wrap'),
+          periodoInp=line.querySelector('.i-periodo'),
+          periodoMsg=line.querySelector('.i-periodo-msg');
+    function validarPeriodo(){
+      const v=periodoInp.value.trim();
+      if(!v){ it.periodo=''; periodoMsg.textContent=''; periodoInp.style.borderColor=''; return; }
+      const mp=mesesDePeriodo(v);
+      if(mp){ it.periodo=v; periodoInp.style.borderColor='var(--olive-deep, #5f7a4e)'; periodoMsg.style.color='var(--olive-deep, #5f7a4e)'; periodoMsg.textContent=`✓ ${fmtPeriodo(v)} · ${mp} ${mp===1?'mes':'meses'}`; }
+      else { it.periodo=v; periodoInp.style.borderColor='#c0392b'; periodoMsg.style.color='#c0392b'; periodoMsg.textContent='Formato inválido. Usá MMMAA-MMMAA, ej. JUN26-AGO26 (el 2.º mes ≥ al 1.º).'; }
+    }
+    modoSel.onchange=e=>{
+      if(e.target.value==='periodo'){ plazoWrap.style.display='none'; periodoWrap.style.display=''; it.plazo=''; line.querySelector('.i-plazo').value=''; validarPeriodo(); }
+      else { periodoWrap.style.display='none'; plazoWrap.style.display=''; it.periodo=''; periodoInp.value=''; periodoMsg.textContent=''; }
+      sub(line,it); renderDoc();
+    };
+    periodoInp.oninput=e=>{ validarPeriodo(); sub(line,it); renderDoc(); };
+    if(it.periodo) validarPeriodo();
   });
 }
-function sub(line,it){ line.querySelector('.subline').textContent='Subtotal: '+CUR.currency+' '+fmt(num(it.price)*num(it.qty)*(num(it.plazo)||1)); }
-function addItem(){ CUR.items.push({catId:'',detail:'',price:'',qty:1,plazo:''}); renderItems(); renderDoc(); }
-function delItem(i){ CUR.items.splice(i,1); if(!CUR.items.length) CUR.items.push({catId:'',detail:'',price:'',qty:1,plazo:''}); renderItems(); renderDoc(); }
+function sub(line,it){ line.querySelector('.subline').textContent='Subtotal: '+CUR.currency+' '+fmt(num(it.price)*num(it.qty)*itemMeses(it)); }
+function addItem(){ CUR.items.push({catId:'',detail:'',price:'',qty:1,plazo:'',periodo:''}); renderItems(); renderDoc(); }
+function delItem(i){ CUR.items.splice(i,1); if(!CUR.items.length) CUR.items.push({catId:'',detail:'',price:'',qty:1,plazo:'',periodo:''}); renderItems(); renderDoc(); }
 
 /* ---- live document render (mirrors the source PDF) ---- */
 function renderDoc(){
   const m=document.getElementById('docMount'); if(!m) return;
   const cur=esc(CUR.currency||'USD');
   const sym=curSym(CUR.currency);
-  // ¿algún ítem tiene plazo? Si no, la columna PLAZO desaparece y se reacomoda la grilla
-  const hasPlazo = CUR.items.some(it=>num(it.plazo)>0);
+  // ¿algún ítem tiene plazo o período? Si no, la columna desaparece y se reacomoda la grilla
+  const hasPlazo = CUR.items.some(it=>itemTienePlazo(it));
+  // Si todos los que tienen valor usan meses numéricos -> "PLAZO (MESES)"; si hay algún período -> "PLAZO"
+  const hayPeriodo = CUR.items.some(it=>it.periodo && mesesDePeriodo(it.periodo));
+  const plazoHeader = hayPeriodo ? 'PLAZO' : 'PLAZO (MESES)';
   const rows=CUR.items.map((it,i)=>`
     <tr>
       <td class="it-num">${String(i+1).padStart(2,'0')}</td>
       <td class="it-detail">${esc(it.detail)||'&nbsp;'}</td>
       <td class="it-r">${fmt(num(it.price))}</td>
       <td class="it-c">${esc(it.qty)}</td>
-      ${hasPlazo?`<td class="it-c">${esc(it.plazo)||'—'}</td>`:''}
-      <td class="it-sub col-sub">${fmt(num(it.price)*num(it.qty)*(num(it.plazo)||1))}</td>
+      ${hasPlazo?`<td class="it-c">${itemPlazoTexto(it)}</td>`:''}
+      <td class="it-sub col-sub">${fmt(num(it.price)*num(it.qty)*itemMeses(it))}</td>
     </tr>`).join('');
   m.innerHTML = `
   <div class="page ${CUR.showTotal?'':'no-total'}">
@@ -3650,7 +3716,7 @@ function renderDoc(){
     <table class="items ${hasPlazo?'':'no-plazo'}">
       <thead><tr>
         <th style="width:58px">ÍTEM</th><th>DETALLE</th><th class="r">UNITARIO (${sym})</th>
-        <th class="c">CANT.</th>${hasPlazo?`<th class="c">PLAZO (MESES)</th>`:''}<th class="r col-sub">SUBTOTAL (${sym})</th>
+        <th class="c">CANT.</th>${hasPlazo?`<th class="c">${plazoHeader}</th>`:''}<th class="r col-sub">SUBTOTAL (${sym})</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
