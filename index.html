@@ -641,6 +641,21 @@ async function sbFetch(path, opts={}, _retry=false){
 }
 
 const SB = {
+  // Trae TODAS las filas paginando de a 1000 (PostgREST corta en db-max-rows=1000
+  // aunque pidas un Range mayor). Repite hasta que el servidor devuelve menos de PAGE.
+  _fetchAll: async (basePath) => {
+    const PAGE = 1000;
+    let from = 0, all = [];
+    while(true){
+      const to = from + PAGE - 1;
+      const chunk = await sbFetch(basePath, { headers:{ 'Range-Unit':'items', 'Range': from+'-'+to } });
+      const arr = Array.isArray(chunk) ? chunk : [];
+      all = all.concat(arr);
+      if(arr.length < PAGE) break;   // última página
+      from += PAGE;
+    }
+    return all;
+  },
   // ---- Clientes ----
   listClients: () => sbFetch('/clientes?select=*&order=nombre.asc'),
   addClient:   (c) => sbFetch('/clientes', {method:'POST', body: JSON.stringify(c)}).then(r=>r[0]),
@@ -673,10 +688,10 @@ const SB = {
   addAct:      (a) => sbFetch('/actividades', {method:'POST', body: JSON.stringify(a)}).then(r=>r[0]),
   delAct:      (id) => sbFetch('/actividades?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
   // ---- Prospección ----
-  listEmpProsp: () => sbFetch('/empresas_prospecto?select=*&order=nombre.asc', {headers:{'Range':'0-1999'}}),
+  listEmpProsp: () => SB._fetchAll('/empresas_prospecto?select=*&order=nombre.asc'),
   addEmpProsp:  (e) => sbFetch('/empresas_prospecto', {method:'POST', body: JSON.stringify(e)}).then(r=>r[0]),
   updateEmpProsp: (id,e) => sbFetch('/empresas_prospecto?id=eq.'+id, {method:'PATCH', body: JSON.stringify(e)}).then(r=>r[0]),
-  listProspectos: () => sbFetch('/prospectos?select=*&order=apellido.asc', {headers:{'Range':'0-4999'}}),
+  listProspectos: () => SB._fetchAll('/prospectos?select=*&order=apellido.asc'),
   addProspecto: (p) => sbFetch('/prospectos', {method:'POST', body: JSON.stringify(p)}).then(r=>r[0]),
   updateProspecto: (id,p) => sbFetch('/prospectos?id=eq.'+id, {method:'PATCH', body: JSON.stringify(p)}).then(r=>r[0]),
   delProspecto: (id) => sbFetch('/prospectos?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
@@ -719,9 +734,14 @@ function quoteToRow(q){
 }
 function parseVer(ref){ const m=/VER\s*0*([0-9]+)/i.exec(String(ref||'')); return m?parseInt(m[1],10):1; }
 // Construye el número de referencia: "0001 · VER 01" (nº de oferta padStart 4 + versión padStart 2)
-function refStr(seq, version){
-  const nro = (seq!=null) ? String(seq).padStart(4,'0') : '(sin asignar)';
+function refStr(seq, version, unidad){
   const ver = String(version||1).padStart(2,'0');
+  // Ventas: formato OE-0001-01. Rental: formato clásico "0001 · VER 01".
+  if(unidad==='ventas'){
+    const nro = (seq!=null) ? String(seq).padStart(4,'0') : '(sin asignar)';
+    return `OE-${nro}-${ver}`;
+  }
+  const nro = (seq!=null) ? String(seq).padStart(4,'0') : '(sin asignar)';
   return `${nro} · VER ${ver}`;
 }
 function rowToQuote(r){
@@ -980,6 +1000,7 @@ document.getElementById('modalBg').onclick=e=>{ if(e.target.id==='modalBg') clos
 
 /* ================= ICONS ================= */
 const ICO = {
+  refresh:'<svg class="meta-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M21 12a9 9 0 1 1-2.64-6.36M21 3v6h-6"/></svg>',
   cal:'<svg class="meta-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="4.5" width="18" height="17" rx="2"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg>',
   user:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6 8-6s8 2 8 6"/></svg>',
   mail:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3.5 6.5 12 13l8.5-6.5"/></svg>',
@@ -1885,7 +1906,7 @@ function openOpp(id){
       </div>
     </div>`;
 
-  const puedeCotizar = (o.unidad==='rental'||o.unidad==='ambas') && !o.cotizacionId;
+  const puedeCotizar = o.state!=='desestimada' && !o.cotizacionId;
   const cotizarBtn = puedeCotizar
     ? `<button class="btn" onclick="cotizarOportunidad('${o.id}')">${ICO.plus} Generar cotización</button>` : '';
   const verCotBtn = o.cotizacionId
@@ -2185,40 +2206,27 @@ let ventasFiltroEstado = '';
 window.ventasSort = { col:'created', dir:-1 };
 
 VIEWS.ventas = function(){
-  setHeader('Ventas','Seguimiento de oportunidades y cotizaciones',
+  setHeader('Ventas','Cotizaciones y seguimiento',
     `<button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
      <button class="btn ghost" onclick="newQuote(null,'ventas')">${ICO.plus} Nueva cotización</button>`);
 
-  let list = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
-  if(ventasFiltroEstado) list = list.filter(o=>o.state===ventasFiltroEstado);
-  else list = list.filter(o=> o.state!=='desestimada');
-  if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
-  const vg = (o,col)=>{
-    switch(col){
-      case 'ref':    return (o.ref||'').toLowerCase();
-      case 'client': return oppClientName(o).toLowerCase();
-      case 'tipo':   return (o.tipo||'').toLowerCase();
-      case 'prio':   return OPP_PRIOS.indexOf(o.prioridad);
-      case 'estado': return OPP_ESTADOS.indexOf(o.state);
-      case 'fecha':  return o.fechaLimite||'';
-      case 'valor':  return o.valor!=null?o.valor:-1;
-      default:       return o.created;
-    }
-  };
-  list.sort((a,b)=>{
-    const va=vg(a,ventasSort.col), vb=vg(b,ventasSort.col);
-    if(va<vb) return -1*ventasSort.dir;
-    if(va>vb) return  1*ventasSort.dir;
-    return 0;
-  });
+  // Oportunidades de ventas (o ambas) que todavía NO tienen cotización formal vinculada
+  let opps = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
+  // Cotizaciones formales de la unidad Ventas
+  let list = DB.quotes.filter(q=> q.unidad==='ventas');
 
+  // filtro por estado (aplica a ambos)
+  if(ventasFiltroEstado){
+    list = list.filter(q=> q.state===ventasFiltroEstado);
+    opps = opps.filter(o=> o.state===ventasFiltroEstado);
+  }
+  if(filtroVendedor){
+    list = list.filter(q=> q.comercial===filtroVendedor);
+    opps = opps.filter(o=> o.comercial===filtroVendedor);
+  }
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
-
-  // Cotizaciones formales de la unidad Ventas (mismo patrón que Rental)
-  let cotVentas = DB.quotes.filter(q=> q.unidad==='ventas');
-  if(ventasFiltroEstado) cotVentas = cotVentas.filter(q=> q.state===ventasFiltroEstado);
-  if(filtroVendedor) cotVentas = cotVentas.filter(q=> q.comercial===filtroVendedor);
-  const gruposVentas = groupQuotes(cotVentas);
+  const groups = groupQuotes(list);
+  const hayAlgo = groups.length || opps.length;
 
   C().innerHTML = `
     <div class="opp-filters">
@@ -2227,43 +2235,36 @@ VIEWS.ventas = function(){
         ${optSel(ventasFiltroEstado, OPP_ESTADOS.map(s=>[s,OPP_ESTADO_LBL[s]]))}
       </select>
       ${vendedorFilterSelect('vVend')}
-      <span class="help" style="margin-left:auto">${list.length} ${list.length===1?'registro':'registros'}</span>
+      <span class="help" style="margin-left:auto">${opps.length+groups.length} ${(opps.length+groups.length)===1?'registro':'registros'}</span>
     </div>
-    <div class="card"><div class="card-b" style="padding:0">
-      ${list.length ? `<table class="grid">
-        <thead><tr>
-          ${sortTh('Ref.','ref','ventasSort','VIEWS.ventas')}
-          ${sortTh('Cliente / Organismo','client','ventasSort','VIEWS.ventas')}
-          ${sortTh('Tipo','tipo','ventasSort','VIEWS.ventas')}
-          ${sortTh('Prioridad','prio','ventasSort','VIEWS.ventas')}
-          ${sortTh('Estado','estado','ventasSort','VIEWS.ventas')}
-          ${sortTh('Fecha límite','fecha','ventasSort','VIEWS.ventas')}
-          ${sortTh('Valor','valor','ventasSort','VIEWS.ventas','r')}
-        </tr></thead>
-        <tbody>${list.map(rowOpp).join('')}</tbody></table>`
-      : `<div class="empty" style="padding:40px">No hay oportunidades de ventas todavía. Se crean al convertir un prospecto, o con “Nueva oportunidad”.</div>`}
-    </div></div>
-
-    <div style="font-size:15px;font-weight:700;color:#37432c;margin:22px 0 10px">Cotizaciones de ventas</div>
-    <div class="card"><div class="card-b" style="padding:0">
-      ${gruposVentas.length ? `<table class="grid">
+    <div class="card">
+      ${hayAlgo? `<table class="grid">
         <thead><tr>
           <th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th>
           <th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th>
         </tr></thead>
-        <tbody>${gruposVentas.map(rowGroup).join('')}</tbody></table>`
-      : `<div class="empty" style="padding:34px">No hay cotizaciones de ventas todavía. Creá una con “Nueva cotización”.</div>`}
-    </div></div>`;
+        <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
+        : emptyState('Sin resultados','Probá con otro filtro, o creá una nueva oportunidad o cotización.')}
+    </div>`;
 
   document.getElementById('vEstado').onchange=e=>{ ventasFiltroEstado=e.target.value; VIEWS.ventas(); };
   { const v=document.getElementById('vVend'); if(v) v.onchange=()=>{ filtroVendedor=v.value; VIEWS.ventas(); }; }
-  // Cambios de estado en cotizaciones de ventas
+  // Cambios de estado: oportunidades y cotizaciones usan el mismo patrón que Rental
   C().querySelectorAll('.state-sel').forEach(sel=>{
-    sel.onchange=e=>{ e.stopPropagation(); setQuoteState(sel.dataset.id, sel.value); };
+    if(sel.classList.contains('opp-state-sel')){
+      sel.onchange=async e=>{ e.stopPropagation();
+        try{ await SB.updateOpp(sel.dataset.oid,{estado:sel.value}); toast('Estado actualizado'); await reloadDB();
+          if(sel.value==='ganada'){ await crearCobranzaDesdeOpp(sel.dataset.oid); }
+          VIEWS.ventas(); }
+        catch(err){ toast('Error: '+err.message); }
+      };
+    } else {
+      sel.onchange=e=>{ e.stopPropagation(); setQuoteState(sel.dataset.id, sel.value); };
+    }
     sel.onclick=e=>e.stopPropagation();
   });
-  // Filas de oportunidad abren su detalle; las de cotización abren el editor (ya tienen onclick inline)
-  C().querySelectorAll('tr.clickable:not(.ver-main):not(.ver-child)').forEach(tr=>{ if(tr.dataset.id) tr.onclick=()=> openOpp(tr.dataset.id); });
+  // filas de oportunidad abren el detalle de oportunidad
+  C().querySelectorAll('tr.opp-row').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
 };
 
 function newOppVentas(){
@@ -2358,7 +2359,8 @@ let prospView = { mode:'empresas', empresaId:null, search:'', filtroEstado:'', s
 
 VIEWS.prosp = async function(){
   setHeader('Prospección','Prospección comercial multisector',
-    `<button class="btn" onclick="newProspecto()">${ICO.plus} Nuevo prospecto</button>`);
+    `<button class="btn ghost" onclick="refrescarProspeccion()" title="Volver a traer empresas y contactos desde la base (útil si cargaste un listado por SQL)">${ICO.refresh||''} Actualizar</button>
+     <button class="btn" onclick="newProspecto()">${ICO.plus} Nuevo prospecto</button>`);
   if(!PROSP_LOADED){
     C().innerHTML = `<div class="empty">Cargando base de prospección…</div>`;
     try{ await loadProspeccion(); }
@@ -2367,6 +2369,16 @@ VIEWS.prosp = async function(){
   if(prospView.mode==='empresas') renderEmpresas();
   else renderEmpresaDetalle();
 };
+
+// Fuerza recarga de la base de prospección (sortea el cache de PROSP_LOADED)
+async function refrescarProspeccion(){
+  try{
+    C().innerHTML = `<div class="empty">Actualizando base de prospección…</div>`;
+    await loadProspeccion(true);
+    toast('Prospección actualizada');
+    VIEWS.prosp();
+  }catch(e){ toast('Error al actualizar: '+e.message); }
+}
 
 // ---- Indicadores de prospección ----
 function startOfToday(){ const d=new Date(); d.setHours(0,0,0,0); return d.getTime(); }
@@ -2524,6 +2536,7 @@ function renderEmpresas(){
 
 function toggleProspEstado(st){ prospView.filtroEstadoEmp = (prospView.filtroEstadoEmp===st)?'':st; renderEmpresas(); }
 window.toggleProspEstado = toggleProspEstado;
+window.refrescarProspeccion = refrescarProspeccion;
 
 function renderEmpresaDetalle(){
   const e = DB.empProsp.find(x=>x.id===prospView.empresaId);
@@ -3487,7 +3500,7 @@ async function newQuote(clientId, unidad){
   // Asigna el número de oferta apenas se crea (se ve en preview y PDF desde el inicio)
   try{
     CUR.seq = await SB.nextSeq();
-    CUR.ref = refStr(CUR.seq, CUR.version||1);
+    CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
     renderEditor(true);
   }catch(e){ CUR.ref='(sin asignar)'; renderEditor(true); toast('No se pudo asignar el número: '+e.message); }
 }
@@ -3515,7 +3528,7 @@ async function cotizarOportunidad(oppId){
   renderEditor(true);
   try{
     CUR.seq = await SB.nextSeq();
-    CUR.ref = refStr(CUR.seq, CUR.version||1);
+    CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
     renderEditor(true);
   }catch(e){ CUR.ref='(sin asignar)'; renderEditor(true); toast('No se pudo asignar el número: '+e.message); }
 }
@@ -3543,7 +3556,7 @@ async function newVersion(id){
   nueva.id = null;                       // registro nuevo en la base (uuid propio)
   nueva.seq = base.seq;                  // MISMO número/línea de referencia
   nueva.version = maxVer + 1;            // v2, v3, ...
-  nueva.ref = refStr(nueva.seq, nueva.version);
+  nueva.ref = refStr(nueva.seq, nueva.version, nueva.unidad);
   nueva.state = 'borrador';              // la nueva versión arranca como borrador
   nueva.dateISO = todayISO();            // fecha de la revisión
   nueva.created = Date.now();
@@ -3888,7 +3901,7 @@ async function saveQuote(opts){
       CUR.state = opts.state || 'borrador';
       if(!CUR.seq){
         CUR.seq = await SB.nextSeq();          // incremento atómico (no se pisa entre usuarios)
-        CUR.ref = refStr(CUR.seq, CUR.version||1);
+        CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
       }
       const row = await SB.addQuote(quoteToRow(CUR));
       CUR.id = row.id;                          // adoptar el uuid de Supabase
