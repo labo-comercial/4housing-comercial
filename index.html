@@ -976,7 +976,11 @@ function upperName(s){ return String(s==null?'':s).toLocaleUpperCase('es-AR'); }
 // Resto de campos: Primera Letra De Cada Palabra En Mayúscula, resto minúscula
 function titleCase(s){
   return String(s==null?'':s).toLocaleLowerCase('es-AR')
-    .replace(/\b[\p{L}]/gu, c => c.toLocaleUpperCase('es-AR'));
+    // Capitaliza la primera letra de cada palabra. Se separa por límites
+    // explícitos (inicio, espacios y signos) en vez de \b, que se comporta
+    // mal con caracteres acentuados (á, é, í, ó, ú, ñ) y dejaba letras
+    // sueltas en mayúscula en medio de la palabra.
+    .replace(/(^|[\s\-/.,'"(])([\p{L}])/gu, (m, sep, ch) => sep + ch.toLocaleUpperCase('es-AR'));
 }
 
 /* ================= ROUTER ================= */
@@ -1187,7 +1191,7 @@ window.quoteSort = { col:'fecha', dir:-1 }; // por defecto: más recientes prime
 
 // Agrupa cotizaciones por número de oferta (seq). Devuelve grupos ordenados,
 // cada uno con su versión más reciente como "principal" y el resto como hijas.
-function groupQuotes(list){
+function groupQuotes(list, sortVar){
   const map = new Map();
   list.forEach(q=>{
     const key = (q.seq!=null) ? ('s'+q.seq) : ('id'+q.id); // sin nº asignado: grupo propio
@@ -1200,7 +1204,7 @@ function groupQuotes(list){
     groups.push({ key, seq:versions[0].seq, main:versions[0], versions });
   });
   // orden por columna (sobre la versión principal de cada grupo)
-  const s = window.quoteSort;
+  const s = window[sortVar||'quoteSort'];
   const keyfn = (g)=>{
     const m=g.main;
     switch(s.col){
@@ -1814,7 +1818,7 @@ VIEWS.opps = function(){
   setHeader('Oportunidades','Pipeline comercial',
     `<button class="btn" onclick="newOpp()">${ICO.plus} Nueva oportunidad</button>`);
 
-  let list = [...DB.opps];
+  let list = [...DB.opps].filter(o=> !o.cotizacionId);  // las convertidas viven como cotización
   if(oppFilters.unidad)    list = list.filter(o=>o.unidad===oppFilters.unidad);
   if(oppFilters.estado)    list = list.filter(o=>o.state===oppFilters.estado);
   else                     list = list.filter(o=>o.state!=='desestimada');
@@ -2221,7 +2225,7 @@ async function saveAct(oppId){
 
 /* ================= VENTAS (lista unificada por estado) ================= */
 let ventasFiltroEstado = '';
-window.ventasSort = { col:'created', dir:-1 };
+window.ventasSort = { col:'fecha', dir:-1 };
 
 VIEWS.ventas = function(){
   setHeader('Ventas','Cotizaciones y seguimiento',
@@ -2243,7 +2247,27 @@ VIEWS.ventas = function(){
     opps = opps.filter(o=> o.comercial===filtroVendedor);
   }
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
-  const groups = groupQuotes(list);
+  // Ordena las oportunidades con el mismo criterio de columna que las cotizaciones
+  const oppKey = (o, col)=>{
+    switch(col){
+      case 'ref':      return (o.ref||'').toLowerCase();
+      case 'client':   return oppClientName(o).toLowerCase();
+      case 'attn':     return (titleCase(o.title)||'').toLowerCase();
+      case 'comercial':return (o.comercial||'').toLowerCase();
+      case 'state':    return (stLabel(o.state)||'').toLowerCase();
+      case 'total':    return o.valor!=null?o.valor:-1;
+      case 'fecha':    return o.fechaLimite || o.created || 0;
+      default:         return o.created || 0;
+    }
+  };
+  const vs = window.ventasSort;
+  opps = opps.slice().sort((a,b)=>{
+    const va=oppKey(a,vs.col), vb=oppKey(b,vs.col);
+    if(va<vb) return -1*vs.dir;
+    if(va>vb) return  1*vs.dir;
+    return 0;
+  });
+  const groups = groupQuotes(list, 'ventasSort');
   const hayAlgo = groups.length || opps.length;
 
   C().innerHTML = `
@@ -2258,8 +2282,14 @@ VIEWS.ventas = function(){
     <div class="card">
       ${hayAlgo? `<table class="grid">
         <thead><tr>
-          <th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th>
-          <th>Estado</th><th class="r">Total</th><th class="r">Fecha</th><th></th>
+          ${sortTh('Ref.','ref','ventasSort','VIEWS.ventas')}
+          ${sortTh('Cliente','client','ventasSort','VIEWS.ventas')}
+          ${sortTh('Atención','attn','ventasSort','VIEWS.ventas')}
+          ${sortTh('Comercial','comercial','ventasSort','VIEWS.ventas')}
+          ${sortTh('Estado','state','ventasSort','VIEWS.ventas')}
+          ${sortTh('Total','total','ventasSort','VIEWS.ventas','r')}
+          ${sortTh('Fecha','fecha','ventasSort','VIEWS.ventas','r')}
+          <th></th>
         </tr></thead>
         <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
         : emptyState('Sin resultados','Probá con otro filtro, o creá una nueva oportunidad o cotización.')}
@@ -2330,8 +2360,8 @@ VIEWS.dashboard_ventas = function(){
     <div class="kpi-value">${value}</div>
     <div class="kpi-sub">${sub||''}</div></div>`;
   const f = ventasPanelFiltro;
-  // lista de abajo, filtrada según el KPI activo
-  let list = DB.opps.filter(o=> o.unidad==='ventas'||o.unidad==='ambas');
+  // lista de abajo, filtrada según el KPI activo (sin convertidas ni desestimadas)
+  let list = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
   if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
   if(f==='activas')  list = list.filter(o=> o.state==='nuevo'||o.state==='borrador');
   else if(f==='enviada') list = list.filter(o=> o.state==='enviada');
