@@ -1004,7 +1004,7 @@ function prevMonthKey(){ const d=new Date(); d.setDate(1); d.setMonth(d.getMonth
 
 VIEWS.dashboard = function(){
   setHeader('Rental','Indicadores comerciales');
-  const q = DB.quotes;
+  const q = DB.quotes.filter(x=> x.unidad!=='ventas');
   const cm = curMonthKey(), pm = prevMonthKey();
   const hoy0 = startOfToday();
 
@@ -1199,8 +1199,8 @@ VIEWS.quotes = function(){
 
   // Oportunidades de rental (o ambas) que todavía NO tienen cotización formal vinculada
   let opps = DB.opps.filter(o=> (o.unidad==='rental'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
-  // Cotizaciones formales (tabla cotizaciones)
-  let list=[...DB.quotes];
+  // Cotizaciones formales (tabla cotizaciones) — solo unidad rental (las de ventas viven en su propia vista)
+  let list=DB.quotes.filter(q=> q.unidad!=='ventas');
 
   // filtro por estado (aplica a ambos)
   if(quoteFilter!=='all'){
