@@ -485,6 +485,10 @@ textarea.inp{resize:vertical;min-height:60px;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.3 2.7-5 6-5s6 1.7 6 5"/><path d="M16 5.5a3 3 0 0 1 0 5.4M18 20c0-2.4-1-4-2.5-4.7"/></svg>
         Clientes
       </button>
+      <button class="navbtn" data-view="audit">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+        Historial
+      </button>
     </nav>
     <div class="sp"></div>
     <div class="data-actions">
@@ -712,6 +716,10 @@ const SB = {
   listGestiones: () => sbFetch('/gestiones_cobranza?select=*&order=fecha.desc'),
   addGestion:    (g) => sbFetch('/gestiones_cobranza', {method:'POST', body: JSON.stringify(g)}).then(r=>r[0]),
   delGestion:    (id) => sbFetch('/gestiones_cobranza?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // ---- Audit trail (log automático por triggers de Supabase) ----
+  // Devuelve las últimas N filas del log, o filtra por registro concreto.
+  listAudit:   (limit=100) => sbFetch('/audit_log?select=*&order=cambiado_en.desc&limit='+limit),
+  auditDeRegistro: (tabla,regId) => sbFetch('/audit_log?tabla=eq.'+tabla+'&registro_id=eq.'+regId+'&select=*&order=cambiado_en.desc'),
 };
 
 // ---- Mapeo entre el modelo interno (app) y las columnas de Supabase ----
@@ -795,6 +803,7 @@ function rowToOpp(r){
     fechaLimite:r.fecha_limite||'', valor:r.valor_estimado!=null?Number(r.valor_estimado):null,
     moneda:r.moneda||'ARS', comercial:r.comercial_asignado||'',
     cotizacionId:r.cotizacion_id||'', notas:r.notas||'',
+    proximoPaso:r.proximo_paso||'', proximoPasoFecha:r.proximo_paso_fecha||'',
     formaPago:parseFormaPago(r.forma_pago),
     created:r.created_at?Date.parse(r.created_at):Date.now(),
     updated:r.updated_at?Date.parse(r.updated_at):(r.created_at?Date.parse(r.created_at):Date.now())
@@ -1814,6 +1823,109 @@ function oppClientName(o){
 }
 function fmtFecha(iso){ return iso ? isoToText(iso) : '—'; }
 
+/* ================= KANBAN (pipeline visual) ================= */
+// Vista alternativa de oportunidades: columnas por estado, montos por
+// columna separados por moneda (USD / ARS), y arrastre entre columnas
+// que actualiza el estado vía SB.updateOpp (misma lógica que el <select>).
+let oppVista = 'tabla'; // 'tabla' | 'kanban'
+// Estados que se muestran como columnas (sin 'desestimada', que se oculta).
+const KANBAN_COLS = ['nuevo','borrador','enviada','negociacion','ganada','perdida'];
+
+// Inyecta los estilos del Kanban una sola vez.
+function ensureKanbanStyles(){
+  if(document.getElementById('kanbanStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'kanbanStyles';
+  st.textContent = `
+    .kanban-wrap{display:flex;gap:10px;overflow-x:auto;padding:4px 2px 12px}
+    .kanban-col{flex:0 0 240px;background:#eeece3;border-radius:12px;padding:8px;display:flex;flex-direction:column}
+    .kanban-col.drop-hi{outline:2px dashed #9db98b;outline-offset:-2px}
+    .kanban-col-head{display:flex;justify-content:space-between;align-items:baseline;padding:2px 4px 6px}
+    .kanban-col-head .kc-name{font-size:12.5px;font-weight:700;color:#37432c}
+    .kanban-col-head .kc-count{font-size:11px;color:var(--muted)}
+    .kanban-col-sum{font-size:11px;color:#5f7a4e;font-weight:700;padding:0 4px 8px;line-height:1.5}
+    .kanban-card{background:#fff;border:1px solid #e0ddd0;border-radius:8px;padding:9px 10px;margin-bottom:7px;cursor:grab}
+    .kanban-card:active{cursor:grabbing}
+    .kanban-card.dragging{opacity:.45}
+    .kanban-card .kc-cli{font-size:12.5px;font-weight:700;color:#37432c;margin-bottom:3px}
+    .kanban-card .kc-det{font-size:11.5px;color:var(--muted);margin-bottom:7px}
+    .kanban-card .kc-foot{display:flex;justify-content:space-between;align-items:center;gap:6px}
+    .kanban-card .kc-un{font-size:10px;padding:1px 7px;border-radius:6px;font-weight:600;white-space:nowrap}
+    .kanban-card .kc-un.r{background:#e1e6d8;color:#37432c}
+    .kanban-card .kc-un.v{background:#dce7ef;color:#1f3a4d}
+    .kanban-card .kc-val{font-size:11.5px;font-weight:700;color:#37432c;white-space:nowrap}
+    .kanban-empty{font-size:11px;color:var(--muted);padding:10px 4px}
+    .vista-toggle{display:inline-flex;border:1px solid #d9d5c6;border-radius:8px;overflow:hidden}
+    .vista-toggle button{border:0;background:#fff;color:#5f6b4e;font-size:12px;padding:5px 12px;cursor:pointer}
+    .vista-toggle button.on{background:#5f7a4e;color:#f4f2ea}
+  `;
+  document.head.appendChild(st);
+}
+
+// Suma montos de una lista separando por moneda. Devuelve string tipo
+// "USD 34.000 · $ 120.000" (omite la que esté en cero).
+function kanbanSum(list){
+  let usd=0, ars=0;
+  list.forEach(o=>{ if(o.valor==null) return; if(o.moneda==='ARS') ars+=o.valor; else usd+=o.valor; });
+  const parts=[];
+  if(usd) parts.push('USD '+fmt(usd));
+  if(ars) parts.push('$ '+fmt(ars));
+  return parts.length ? parts.join(' · ') : '—';
+}
+
+function kanbanCard(o){
+  const unCls = o.unidad==='ventas' ? 'v' : 'r';
+  const unLbl = o.unidad==='ventas' ? 'Ventas' : 'Rental';
+  const val = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
+  const det = esc(titleCase(o.tipo)||o.ref||'');
+  return `<div class="kanban-card" draggable="true" data-id="${o.id}">
+    <div class="kc-cli">${esc(upperName(oppClientName(o)))}</div>
+    ${det?`<div class="kc-det">${det}</div>`:''}
+    <div class="kc-foot"><span class="kc-un ${unCls}">${unLbl}</span><span class="kc-val">${val}</span></div>
+  </div>`;
+}
+
+function renderKanban(list){
+  ensureKanbanStyles();
+  const cols = KANBAN_COLS.map(estado=>{
+    const items = list.filter(o=>o.state===estado);
+    const cards = items.length ? items.map(kanbanCard).join('') : '<div class="kanban-empty">—</div>';
+    return `<div class="kanban-col" data-estado="${estado}">
+      <div class="kanban-col-head"><span class="kc-name">${OPP_ESTADO_LBL[estado]||estado}</span><span class="kc-count">${items.length}</span></div>
+      <div class="kanban-col-sum">${kanbanSum(items)}</div>
+      <div class="kanban-col-body">${cards}</div>
+    </div>`;
+  }).join('');
+  return `<div class="kanban-wrap">${cols}</div>`;
+}
+
+// Enlaza drag & drop y click en las tarjetas del Kanban.
+function wireKanban(){
+  let dragId = null;
+  C().querySelectorAll('.kanban-card').forEach(card=>{
+    card.addEventListener('dragstart', e=>{ dragId=card.dataset.id; card.classList.add('dragging'); e.dataTransfer.effectAllowed='move'; });
+    card.addEventListener('dragend', ()=> card.classList.remove('dragging'));
+    card.addEventListener('click', ()=> openOpp(card.dataset.id));
+  });
+  C().querySelectorAll('.kanban-col').forEach(col=>{
+    col.addEventListener('dragover', e=>{ e.preventDefault(); col.classList.add('drop-hi'); });
+    col.addEventListener('dragleave', ()=> col.classList.remove('drop-hi'));
+    col.addEventListener('drop', async e=>{
+      e.preventDefault(); col.classList.remove('drop-hi');
+      const nuevoEstado = col.dataset.estado;
+      const o = DB.opps.find(x=>x.id===dragId); dragId=null;
+      if(!o || o.state===nuevoEstado) return;
+      try{
+        await SB.updateOpp(o.id, { estado: nuevoEstado }); o.state=nuevoEstado;
+        toast('Estado actualizado');
+        if(nuevoEstado==='ganada'){ await reloadDB(); await crearCobranzaDesdeOpp(o.id); }
+        refreshCurrent();
+      }catch(err){ toast('Error: '+err.message); }
+    });
+  });
+}
+function setOppVista(v){ oppVista=v; VIEWS.opps(); }
+
 VIEWS.opps = function(){
   setHeader('Oportunidades','Pipeline comercial',
     `<button class="btn" onclick="newOpp()">${ICO.plus} Nueva oportunidad</button>`);
@@ -1845,55 +1957,179 @@ VIEWS.opps = function(){
 
   const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
 
+  const vistaToggle = `<div class="vista-toggle">
+      <button class="${oppVista==='tabla'?'on':''}" onclick="setOppVista('tabla')">Tabla</button>
+      <button class="${oppVista==='kanban'?'on':''}" onclick="setOppVista('kanban')">Kanban</button>
+    </div>`;
+
+  // En Kanban el estado se representa por columna, así que ocultamos ese filtro.
+  const filtroEstado = oppVista==='kanban' ? '' : `
+      <select id="fEstado">
+        <option value="">Todos los estados</option>
+        ${optSel(oppFilters.estado, OPP_ESTADOS.map(s=>[s,OPP_ESTADO_LBL[s]]))}
+      </select>`;
+
+  const cuerpo = oppVista==='kanban'
+    ? (list.length ? renderKanban(list)
+        : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.prioridad?' con estos filtros':''}.</div>`)
+    : `<div class="card"><div class="card-b" style="padding:0">
+        ${list.length ? `<table class="grid">
+          <thead><tr>
+            ${sortTh('Ref.','ref','oppSort','VIEWS.opps')}
+            ${sortTh('Cliente / Organismo','client','oppSort','VIEWS.opps')}
+            ${sortTh('Tipo','tipo','oppSort','VIEWS.opps')}
+            ${sortTh('Prioridad','prio','oppSort','VIEWS.opps')}
+            ${sortTh('Estado','estado','oppSort','VIEWS.opps')}
+            ${sortTh('Fecha límite','fecha','oppSort','VIEWS.opps')}
+            ${sortTh('Valor','valor','oppSort','VIEWS.opps','r')}
+          </tr></thead>
+          <tbody>${list.map(rowOpp).join('')}</tbody></table>`
+        : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.estado||oppFilters.prioridad?' con estos filtros':''}. Llegan automáticamente desde los mails, o podés crear una con “Nueva oportunidad”.</div>`}
+      </div></div>`;
+
   C().innerHTML = `
     <div class="opp-filters">
       <select id="fUnidad">
         <option value="">Todas las unidades</option>
         ${optSel(oppFilters.unidad, [['rental','Rental'],['ventas','Ventas']])}
       </select>
-      <select id="fEstado">
-        <option value="">Todos los estados</option>
-        ${optSel(oppFilters.estado, OPP_ESTADOS.map(s=>[s,OPP_ESTADO_LBL[s]]))}
-      </select>
+      ${filtroEstado}
       <select id="fPrio">
         <option value="">Todas las prioridades</option>
         ${optSel(oppFilters.prioridad, OPP_PRIOS.map(p=>[p,OPP_PRIO_LBL[p]]))}
       </select>
-      <span class="help" style="margin-left:auto">${list.length} oportunidad${list.length===1?'':'es'}</span>
+      <span class="help" style="margin-left:auto;display:flex;align-items:center;gap:12px">${vistaToggle}<span>${list.length} oportunidad${list.length===1?'':'es'}</span></span>
     </div>
-    <div class="card"><div class="card-b" style="padding:0">
-      ${list.length ? `<table class="grid">
-        <thead><tr>
-          ${sortTh('Ref.','ref','oppSort','VIEWS.opps')}
-          ${sortTh('Cliente / Organismo','client','oppSort','VIEWS.opps')}
-          ${sortTh('Tipo','tipo','oppSort','VIEWS.opps')}
-          ${sortTh('Prioridad','prio','oppSort','VIEWS.opps')}
-          ${sortTh('Estado','estado','oppSort','VIEWS.opps')}
-          ${sortTh('Fecha límite','fecha','oppSort','VIEWS.opps')}
-          ${sortTh('Valor','valor','oppSort','VIEWS.opps','r')}
-        </tr></thead>
-        <tbody>${list.map(rowOpp).join('')}</tbody></table>`
-      : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.estado||oppFilters.prioridad?' con estos filtros':''}. Llegan automáticamente desde los mails, o podés crear una con “Nueva oportunidad”.</div>`}
-    </div></div>`;
+    ${cuerpo}`;
 
   document.getElementById('fUnidad').onchange=e=>{ oppFilters.unidad=e.target.value; VIEWS.opps(); };
-  document.getElementById('fEstado').onchange=e=>{ oppFilters.estado=e.target.value; VIEWS.opps(); };
+  { const fe=document.getElementById('fEstado'); if(fe) fe.onchange=e=>{ oppFilters.estado=e.target.value; VIEWS.opps(); }; }
   document.getElementById('fPrio').onchange=e=>{ oppFilters.prioridad=e.target.value; VIEWS.opps(); };
-  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
+  if(oppVista==='kanban') wireKanban();
+  else C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
 };
 
 function rowOpp(o){
   const unidadTag = o.unidad==='ventas' ? '<span class="help" style="font-size:10px"> · Ventas</span>' : '';
   const valor = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
+  let ppChip='';
+  if(o.proximoPaso){
+    let color='#5f7a4e';
+    if(o.proximoPasoFecha){ const hoy=todayISO(); if(o.proximoPasoFecha<hoy) color='#b0584f'; else if(o.proximoPasoFecha===hoy) color='#c08a2a'; }
+    ppChip = `<span title="${esc(o.proximoPaso)}" style="display:inline-block;margin-left:6px;width:7px;height:7px;border-radius:50%;background:${color};vertical-align:middle"></span>`;
+  }
   return `<tr class="clickable" data-id="${o.id}">
     <td><strong>${esc(o.ref||'—')}</strong>${unidadTag}</td>
     <td>${esc(upperName(oppClientName(o)))}</td>
     <td>${esc(titleCase(o.tipo)||'—')}</td>
     <td><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></td>
     <td><span class="badge os-${o.state}">${OPP_ESTADO_LBL[o.state]||o.state}</span></td>
-    <td>${fmtFecha(o.fechaLimite)}</td>
+    <td>${fmtFecha(o.fechaLimite)}${ppChip}</td>
     <td class="r">${valor}</td>
   </tr>`;
+}
+
+/* ================= AUDIT TRAIL (historial de cambios) ================= */
+// Lee la tabla audit_log que llenan los triggers de Supabase. Sólo lectura.
+const AUDIT_TABLA_LBL = { oportunidades:'Oportunidad', cotizaciones:'Cotización', pedidos:'Pedido', facturas:'Factura' };
+const AUDIT_OP_LBL = { INSERT:'Creado', UPDATE:'Modificado', DELETE:'Eliminado' };
+
+// Convierte el diff (jsonb con {campo:{old,new}}) en filas legibles.
+function auditDiffText(row){
+  const d = row.diff || row.cambios || null;
+  if(!d) return '';
+  let obj = d; if(typeof d==='string'){ try{ obj=JSON.parse(d); }catch(e){ return ''; } }
+  const campos = Object.keys(obj||{});
+  if(!campos.length) return '';
+  return campos.map(c=>{
+    const v = obj[c] || {};
+    const o = (v.old==null||v.old==='')?'—':esc(String(v.old));
+    const n = (v.new==null||v.new==='')?'—':esc(String(v.new));
+    return `<span class="help" style="font-size:11px"><code style="background:#f0efe6;padding:1px 5px;border-radius:4px">${esc(c)}</code> <span style="color:#a3573d;text-decoration:line-through">${o}</span> → <span style="color:#5f7a4e;font-weight:600">${n}</span></span>`;
+  }).join('<br>');
+}
+function auditRowHtml(row){
+  const fecha = row.cambiado_en ? new Date(row.cambiado_en).toLocaleString('es-AR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+  const tabla = AUDIT_TABLA_LBL[row.tabla]||row.tabla;
+  const op = AUDIT_OP_LBL[row.operacion]||row.operacion;
+  const usuario = row.usuario || row.usuario_email || '—';
+  const diff = auditDiffText(row);
+  return `<tr>
+    <td style="white-space:nowrap;font-size:12px">${fecha}</td>
+    <td style="font-size:12px;color:var(--muted)">${esc(usuario)}</td>
+    <td style="font-size:12px">${esc(tabla)} · ${op}</td>
+    <td>${diff||'<span class="help" style="font-size:11px">—</span>'}</td>
+  </tr>`;
+}
+async function openAuditModal(tabla, regId, titulo){
+  openModal('Historial de cambios', '<div class="help" style="padding:20px">Cargando…</div>',
+    `<button class="btn ghost" onclick="closeModal()">Cerrar</button>`);
+  try{
+    const rows = await SB.auditDeRegistro(tabla, regId);
+    const body = rows.length
+      ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(auditRowHtml).join('')}</tbody></table>`
+      : '<div class="help" style="padding:20px">Sin cambios registrados todavía para este registro.</div>';
+    openModal(titulo||'Historial de cambios', body, `<button class="btn ghost" onclick="closeModal()">Cerrar</button>`);
+  }catch(e){
+    openModal('Historial de cambios', `<div class="help" style="padding:20px">No se pudo leer el historial: ${esc(e.message)}<br><br>Verificá que la tabla <code>audit_log</code> y sus triggers estén creados en Supabase.</div>`, `<button class="btn ghost" onclick="closeModal()">Cerrar</button>`);
+  }
+}
+VIEWS.audit = async function(){
+  setHeader('Historial de cambios','Auditoría de oportunidades, cotizaciones, pedidos y facturas','');
+  C().innerHTML = '<div class="card"><div class="card-b"><div class="help" style="padding:20px">Cargando historial…</div></div></div>';
+  try{
+    const rows = await SB.listAudit(150);
+    C().innerHTML = `<div class="card"><div class="card-b" style="padding:0">
+      ${rows.length
+        ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(auditRowHtml).join('')}</tbody></table>`
+        : '<div class="empty" style="padding:40px">Sin cambios registrados todavía. El historial se llena automáticamente a medida que el equipo edita oportunidades, cotizaciones, pedidos y facturas.</div>'}
+    </div></div>`;
+  }catch(e){
+    C().innerHTML = `<div class="card"><div class="card-b"><div class="empty" style="padding:40px">No se pudo leer el historial: ${esc(e.message)}<br><br>Verificá que la tabla <code>audit_log</code> y sus triggers estén creados en Supabase (ver instrucciones SQL).</div></div></div>`;
+  }
+};
+
+/* ---- Próximo paso (activity log estilo Salesforce) ---- */
+// Bloque destacado con el próximo paso y su vencimiento. Cambia de color
+// si está vencido o vence pronto. Editable desde el mismo detalle.
+function proximoPasoBlock(o){
+  const editBtn = `<button class="btn ghost" style="padding:3px 10px;font-size:11.5px" onclick="editProximoPaso('${o.id}')">${o.proximoPaso?'Editar':'Definir'}</button>`;
+  if(!o.proximoPaso){
+    return `<div style="margin-top:14px;background:#f0f4ea;border-left:3px solid #9db98b;border-radius:8px;padding:11px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5f7a4e;font-weight:700;margin-bottom:2px">Próximo paso</div><div style="font-size:12.5px;color:var(--muted)">Sin próximo paso definido</div></div>${editBtn}</div>`;
+  }
+  let venceLbl='', accent='#5f7a4e';
+  if(o.proximoPasoFecha){
+    const hoy=todayISO();
+    if(o.proximoPasoFecha < hoy){ venceLbl='Vencido · '+isoToText(o.proximoPasoFecha); accent='#b0584f'; }
+    else if(o.proximoPasoFecha===hoy){ venceLbl='Vence hoy'; accent='#c08a2a'; }
+    else venceLbl='Vence '+isoToText(o.proximoPasoFecha);
+  }
+  return `<div style="margin-top:14px;background:#f0f4ea;border-left:3px solid ${accent};border-radius:8px;padding:11px 14px;display:flex;justify-content:space-between;align-items:center;gap:10px">
+    <div><div style="font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#5f7a4e;font-weight:700;margin-bottom:2px">Próximo paso</div>
+      <div style="font-size:13px;color:#37432c;font-weight:600">${esc(o.proximoPaso)}</div>
+      ${venceLbl?`<div style="font-size:11.5px;color:${accent};margin-top:2px">${venceLbl}</div>`:''}</div>${editBtn}</div>`;
+}
+function editProximoPaso(id){
+  const o = DB.opps.find(x=>x.id===id); if(!o) return;
+  openModal('Próximo paso',
+    `<div class="fld"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Qué hay que hacer</label>
+       <textarea id="ppTexto" class="inp" rows="2" placeholder="Ej: Enviar cotización revisada con descuento por volumen">${esc(o.proximoPaso||'')}</textarea></div>
+     <div class="fld" style="margin-top:10px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Fecha de vencimiento (opcional)</label>
+       <input type="date" id="ppFecha" class="inp" value="${o.proximoPasoFecha||''}"></div>`,
+    `<button class="btn ghost" onclick="openOpp('${id}')">Volver</button>
+     ${o.proximoPaso?`<button class="btn ghost" style="color:#b0584f" onclick="saveProximoPaso('${id}',true)">Limpiar</button>`:''}
+     <button class="btn" onclick="saveProximoPaso('${id}')">Guardar</button>`);
+}
+async function saveProximoPaso(id, limpiar){
+  const o = DB.opps.find(x=>x.id===id); if(!o) return;
+  const texto = limpiar ? '' : document.getElementById('ppTexto').value.trim();
+  const fecha = limpiar ? '' : document.getElementById('ppFecha').value;
+  try{
+    await SB.updateOpp(id, { proximo_paso: texto||null, proximo_paso_fecha: fecha||null });
+    o.proximoPaso=texto; o.proximoPasoFecha=fecha;
+    toast('Próximo paso actualizado'); refreshCurrent(); openOpp(id);
+  }catch(e){ toast('Error: '+e.message); }
 }
 
 function openOpp(id){
@@ -1916,6 +2152,7 @@ function openOpp(id){
       </div>
     </div>
     ${o.notas?`<div class="fld" style="margin-top:6px"><label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Resumen / Notas</label><div style="font-size:13.5px;color:#37432c;margin-top:4px">${esc(o.notas)}</div></div>`:''}
+    ${proximoPasoBlock(o)}
     <div style="margin-top:18px">
       <label style="font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700">Gestiones / Actividades (${acts.length})</label>
       <div style="margin-top:6px">
@@ -1942,6 +2179,7 @@ function openOpp(id){
     ${desestimarBtn}
     <button class="btn ghost" style="color:#b0584f" onclick="delOpp('${o.id}')">Eliminar</button>
     <button class="btn ghost" onclick="addActModal('${o.id}')">${ICO.plus} Gestión</button>
+    <button class="btn ghost" onclick="openAuditModal('oportunidades','${o.id}','Historial · ${esc(o.ref||'Oportunidad')}')">Historial</button>
     ${verCotBtn}${cotizarBtn}`;
 
   openModal(o.ref || 'Oportunidad', body, foot);
@@ -4095,6 +4333,9 @@ window.go=go; window.closeModal=closeModal; window.setQuoteState=setQuoteState; 
 window.toggleSort=toggleSort; window.addClientContact=addClientContact; window.delClientContact=delClientContact;
 window.printCatalog=printCatalog;
 window.doLogin=doLogin;
+window.setOppVista=setOppVista;
+window.editProximoPaso=editProximoPaso; window.saveProximoPaso=saveProximoPaso;
+window.openAuditModal=openAuditModal;
 window.newOpp=newOpp; window.saveNewOpp=saveNewOpp; window.openOpp=openOpp; window.editOpp=editOpp;
 window.saveEditOpp=saveEditOpp; window.delOpp=delOpp; window.desestimarOpp=desestimarOpp; window.reactivarOpp=reactivarOpp; window.addActModal=addActModal; window.saveAct=saveAct;
 window.newProspecto=newProspecto; window.saveNewProspecto=saveNewProspecto; window.openProspecto=openProspecto;
