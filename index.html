@@ -69,14 +69,23 @@ a{color:var(--olive-deep);}
 .card-h h3{margin:0;font-size:15px;font-weight:700;letter-spacing:.01em;}
 .card-b{padding:18px 20px;}
 
-table.grid{width:100%;border-collapse:collapse;font-size:13.5px;}
+table.grid{width:100%;border-collapse:collapse;font-size:13.5px;table-layout:fixed;}
+/* Tablas anchas con scroll propio: mantienen layout automático. */
+table.grid.auto{table-layout:auto;}
 table.grid th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);background:#faf9f4;}
 table.grid th.r,table.grid td.r{text-align:right;}
 table.grid th.c,table.grid td.c{text-align:center;}
-table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;}
-/* Celdas de texto largo: no parten a otra línea, recortan con elipsis. */
-table.grid td.wrap{white-space:normal;}
-table.grid td.ellip{max-width:260px;overflow:hidden;text-overflow:ellipsis;}
+/* Por defecto: una sola línea, recorta con "…" si no entra (nunca desborda). */
+table.grid td{padding:14px 16px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+table.grid th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* Celdas que sí pueden usar varias líneas (ej. detalle de cambios). */
+table.grid td.wrap{white-space:normal;overflow:visible;text-overflow:clip;}
+/* Anchos orientativos: la columna Cliente/Detalle se lleva el espacio sobrante,
+   las cortas (estado, fecha, prioridad, valor) quedan compactas. */
+table.grid col.col-wide{width:auto;}
+table.grid col.col-sm{width:110px;}
+table.grid col.col-md{width:140px;}
+table.grid col.col-num{width:120px;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 table.grid th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;}
@@ -1161,6 +1170,7 @@ VIEWS.dashboard = function(){
         </div>
       </div>
       ${listed.length? `<table class="grid">
+        <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-num"><col class="col-md"></colgroup>
         <thead><tr><th>Ref.</th><th>Cliente</th><th>Atención</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th></tr></thead>
         <tbody>${groupQuotes(listed).map(rowGroupDash).join('')}</tbody></table>`
         : emptyState('Sin cotizaciones','No hay cotizaciones para este indicador.')}
@@ -1300,6 +1310,7 @@ VIEWS.quotes = function(){
     </div>
     <div class="card">
       ${hayAlgo? `<table class="grid">
+        <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-num"><col class="col-md"><col class="col-sm"></colgroup>
         <thead><tr>
           ${sortTh('Ref.','ref','quoteSort','VIEWS.quotes')}
           ${sortTh('Cliente','client','quoteSort','VIEWS.quotes')}
@@ -1571,7 +1582,7 @@ VIEWS.clients = function(){
     </div>
     <div class="toolbar"><div class="search">${ICO.search}<input id="cSearch" placeholder="Buscar por empresa, CUIT, contacto, email…" value="${esc(clientSearch)}"></div>${fa?`<button class="btn ghost sm" onclick="toggleClientAlta('${fa}')">Quitar filtro: ${ALTA_LBL[fa]}</button>`:''}</div>
     <div class="card">
-      ${list.length? `<div style="overflow-x:auto"><table class="grid" style="min-width:1080px">
+      ${list.length? `<div style="overflow-x:auto"><table class="grid auto" style="min-width:1080px">
         <thead><tr>
           ${sortTh('Cliente','name','clientSort','VIEWS.clients')}
           ${sortTh('CUIT','cuit','clientSort','VIEWS.clients')}
@@ -1994,6 +2005,7 @@ VIEWS.opps = function(){
         : `<div class="empty" style="padding:40px">No hay oportunidades${oppFilters.unidad||oppFilters.prioridad?' con estos filtros':''}.</div>`)
     : `<div class="card"><div class="card-b" style="padding:0">
         ${list.length ? `<table class="grid">
+          <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-sm"><col class="col-md"><col class="col-md"><col class="col-num"></colgroup>
           <thead><tr>
             ${sortTh('Ref.','ref','oppSort','VIEWS.opps')}
             ${sortTh('Cliente / Organismo','client','oppSort','VIEWS.opps')}
@@ -2131,7 +2143,7 @@ VIEWS.audit = async function(){
     const rows = await SB.listAudit(150);
     C().innerHTML = `<div class="card"><div class="card-b" style="padding:0">
       ${rows.length
-        ? `<table class="grid"><thead><tr><th>Fecha</th><th>Usuario</th><th>Registro</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(r=>auditRowHtml(r,true)).join('')}</tbody></table>`
+        ? `<table class="grid"><colgroup><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-sm"><col class="col-wide"></colgroup><thead><tr><th>Fecha</th><th>Usuario</th><th>Registro</th><th>Acción</th><th>Cambio</th></tr></thead><tbody>${rows.map(r=>auditRowHtml(r,true)).join('')}</tbody></table>`
         : '<div class="empty" style="padding:40px">Sin cambios registrados todavía. El historial se llena automáticamente a medida que el equipo edita oportunidades, cotizaciones, pedidos y facturas.</div>'}
     </div></div>`;
   }catch(e){
@@ -2569,6 +2581,7 @@ VIEWS.ventas = function(){
     </div>
     <div class="card">
       ${hayAlgo? `<table class="grid">
+        <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-md"><col class="col-md"><col class="col-num"><col class="col-md"><col class="col-sm"></colgroup>
         <thead><tr>
           ${sortTh('Ref.','ref','ventasSort','VIEWS.ventas')}
           ${sortTh('Cliente','client','ventasSort','VIEWS.ventas')}
@@ -2676,6 +2689,7 @@ VIEWS.dashboard_ventas = function(){
         <button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
       </div>
       ${list.length ? `<table class="grid">
+          <colgroup><col class="col-md"><col class="col-wide"><col class="col-md"><col class="col-sm"><col class="col-md"><col class="col-md"><col class="col-num"></colgroup>
           <thead><tr><th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th></tr></thead>
           <tbody>${list.map(rowOpp).join('')}</tbody></table>`
         : `<div class="empty" style="padding:40px">No hay oportunidades${f?' con este filtro':' de ventas todavía'}.</div>`}
@@ -3375,12 +3389,12 @@ VIEWS.cobranzas = function(){
       <span class="help" style="margin-left:auto">${list.length} ${list.length===1?'cobranza':'cobranzas'}</span>
     </div>
     <div class="card"><div class="card-b" style="padding:0">
-      ${list.length ? `<table class="grid">
+      ${list.length ? `<div style="overflow-x:auto"><table class="grid auto" style="min-width:820px">
         <thead><tr>
           <th></th><th>Ref.</th><th>Cliente</th><th>Unidad</th><th>Factura</th><th class="c">Días</th>
           <th class="r">Total</th><th class="r">Saldo</th><th>Estado</th>
         </tr></thead>
-        <tbody>${list.map(rowCobranza).join('')}</tbody></table>`
+        <tbody>${list.map(rowCobranza).join('')}</tbody></table></div>`
       : `<div class="empty" style="padding:40px">No hay cobranzas con este filtro. Las ventas llegan automáticamente al ganar una venta.</div>`}
     </div></div>`;
 
