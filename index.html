@@ -2526,7 +2526,7 @@ async function saveAct(oppId){
 }
 
 /* ================= VENTAS (lista unificada por estado) ================= */
-let ventasFiltroEstado = '';
+let ventasFiltroEstado = 'all', ventasSearch = '';
 window.ventasSort = { col:'fecha', dir:-1 };
 
 VIEWS.ventas = function(){
@@ -2540,15 +2540,25 @@ VIEWS.ventas = function(){
   let list = DB.quotes.filter(q=> q.unidad==='ventas');
 
   // filtro por estado (aplica a ambos)
-  if(ventasFiltroEstado){
+  if(ventasFiltroEstado!=='all'){
     list = list.filter(q=> q.state===ventasFiltroEstado);
     opps = opps.filter(o=> o.state===ventasFiltroEstado);
+  }
+  if(ventasSearch){
+    const q=ventasSearch.toLowerCase();
+    const hay = x => {
+      const items=(x.items||[]).map(it=>`${it.detail||''} ${it.qty||''} ${it.plazo||''} ${it.periodo||''} ${it.price||''}`).join(' ');
+      return (`${x.client||''} ${x.ref||''} ${x.attn||''} ${x.email||''} ${x.phone||''} ${x.comercial||''} ${x.title||''} `+
+        `${x.pago||''} ${x.validez||''} ${x.entrega||''} ${x.minimo||''} ${x.nota1||''} ${x.nota2||''} ${x.ivanote||''} `+
+        `${stLabel(x.state)||''} ${items}`).toLowerCase().includes(q);
+    };
+    list=list.filter(hay);
+    opps=opps.filter(o=>(`${oppClientName(o)} ${o.ref||''} ${o.title||''} ${o.tipo||''} ${o.notas||''} ${o.comercial||''}`).toLowerCase().includes(q));
   }
   if(filtroVendedor){
     list = list.filter(q=> q.comercial===filtroVendedor);
     opps = opps.filter(o=> o.comercial===filtroVendedor);
   }
-  const optSel = (cur, pairs)=> pairs.map(([v,l])=>`<option value="${v}" ${v===cur?'selected':''}>${l}</option>`).join('');
   // Ordena las oportunidades con el mismo criterio de columna que las cotizaciones
   const oppKey = (o, col)=>{
     switch(col){
@@ -2573,13 +2583,13 @@ VIEWS.ventas = function(){
   const hayAlgo = groups.length || opps.length;
 
   C().innerHTML = `
-    <div class="opp-filters">
-      <select id="vEstado">
-        <option value="">Todos los estados</option>
-        ${optSel(ventasFiltroEstado, OPP_ESTADOS.map(s=>[s,OPP_ESTADO_LBL[s]]))}
-      </select>
+    <div class="toolbar">
+      <div class="search">${ICO.search}<input id="vSearch" placeholder="Buscar en todos los campos de la cotización…" value="${esc(ventasSearch)}"></div>
       ${vendedorFilterSelect('vVend')}
-      <span class="help" style="margin-left:auto">${opps.length+groups.length} ${(opps.length+groups.length)===1?'registro':'registros'}</span>
+      <div class="filterpills">
+        <button class="pill ${ventasFiltroEstado==='all'?'active':''}" data-f="all">Todas</button>
+        ${STATES.map(s=>`<button class="pill ${ventasFiltroEstado===s.id?'active':''}" data-f="${s.id}">${s.label}</button>`).join('')}
+      </div>
     </div>
     <div class="card">
       ${hayAlgo? `<table class="grid">
@@ -2597,7 +2607,9 @@ VIEWS.ventas = function(){
         : emptyState('Sin resultados','Probá con otro filtro, o creá una nueva oportunidad o cotización.')}
     </div>`;
 
-  document.getElementById('vEstado').onchange=e=>{ ventasFiltroEstado=e.target.value; VIEWS.ventas(); };
+  const vSearchEl=document.getElementById('vSearch');
+  vSearchEl.oninput=()=>{ ventasSearch=vSearchEl.value; const p=vSearchEl.selectionStart; VIEWS.ventas(); const n=document.getElementById('vSearch'); n.focus(); n.setSelectionRange(p,p); };
+  C().querySelectorAll('.pill').forEach(p=>p.onclick=()=>{ ventasFiltroEstado=p.dataset.f; VIEWS.ventas(); });
   { const v=document.getElementById('vVend'); if(v) v.onchange=()=>{ filtroVendedor=v.value; VIEWS.ventas(); }; }
   // Cambios de estado: oportunidades y cotizaciones usan el mismo patrón que Rental
   C().querySelectorAll('.state-sel').forEach(sel=>{
