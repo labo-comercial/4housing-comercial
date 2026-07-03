@@ -1833,6 +1833,13 @@ function printCatalog(){
 /* ================= OPORTUNIDADES ================= */
 const OPP_ESTADOS = ['nuevo','borrador','enviada','negociacion','ganada','perdida','desestimada'];
 const OPP_ESTADO_LBL = { nuevo:'Nuevo - Pendiente', borrador:'En proceso - Borrador', enviada:'Cotizado - Enviado', negociacion:'En negociación', ganada:'Ganado', perdida:'Perdido', desestimada:'Desestimada' };
+// Opciones de estado para los combos de edición manual: "enviada" queda afuera salvo que la
+// oportunidad ya esté en ese estado (se llega a "Cotizado - Enviado" únicamente generando la
+// cotización real vía cotizarOportunidad, nunca a mano, para no perder la trazabilidad OP -> OE).
+function oppEstadoOpts(o){
+  return OPP_ESTADOS.filter(s => s!=='enviada' || s===o.state)
+    .map(s=>`<option value="${s}" ${s===o.state?'selected':''}>${OPP_ESTADO_LBL[s]}</option>`).join('');
+}
 const OPP_PRIOS = ['urgente','alta','media','baja'];
 const OPP_PRIO_LBL = { urgente:'Urgente', alta:'Alta', media:'Media', baja:'Baja' };
 const OPP_TIPOS = ['Licitación pública','Licitación privada','Pedido de cotización','Notificación de proceso','Consulta','Otro'];
@@ -2188,7 +2195,7 @@ function openOpp(id){
   const o = DB.opps.find(x=>x.id===id); if(!o) return;
   const acts = DB.acts.filter(a=>a.oppId===id).sort((a,b)=>b.fecha-a.fecha);
   const valor = o.valor!=null ? `${o.moneda==='ARS'?'$':'USD'} ${fmt(o.valor)}` : '—';
-  const estadoSel = OPP_ESTADOS.map(s=>`<option value="${s}" ${s===o.state?'selected':''}>${OPP_ESTADO_LBL[s]}</option>`).join('');
+  const estadoSel = oppEstadoOpts(o);
 
   const body = `
     <div class="opp-detail-grid">
@@ -2251,7 +2258,7 @@ function oppFormBody(o){
       .map(c=>`<option value="${c.id}" ${c.id===o.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
   const tipoOpts = OPP_TIPOS.map(t=>`<option value="${t}" ${t===o.tipo?'selected':''}>${t}</option>`).join('');
   const prioOpts = OPP_PRIOS.map(p=>`<option value="${p}" ${p===o.prioridad?'selected':''}>${OPP_PRIO_LBL[p]}</option>`).join('');
-  const estadoOpts = OPP_ESTADOS.map(s=>`<option value="${s}" ${s===o.state?'selected':''}>${OPP_ESTADO_LBL[s]}</option>`).join('');
+  const estadoOpts = oppEstadoOpts(o);
   const unidadOpts = [['rental','Rental'],['ventas','Ventas'],['ambas','Ambas (rental y ventas)']].map(([v,l])=>`<option value="${v}" ${v===o.unidad?'selected':''}>${l}</option>`).join('');
   const monedaOpts = [['ARS','ARS'],['USD','USD']].map(([v,l])=>`<option value="${v}" ${v===o.moneda?'selected':''}>${l}</option>`).join('');
   return `
