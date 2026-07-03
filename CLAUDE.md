@@ -98,17 +98,23 @@ Reemplaza procesos manuales y se conecta con el ERP **Tango Delta 5 (Axoft)**.
 
 ## Estado actual (features completadas)
 
-- Pipeline Kanban, log de actividades con próximo paso, audit trail completo
-  (tabla `audit_log`, `fn_audit()`, triggers en `oportunidades`, `cotizaciones`,
-  `pedidos`, `facturas`).
+- Pipeline Kanban, log de actividades con próximo paso, audit trail parcial
+  (tabla `audit_log`, `fn_audit()`). Triggers confirmados funcionando (con
+  registros reales) en `oportunidades` y `cotizaciones`. Los triggers en
+  `pedidos` y `facturas` NO están confirmados: `audit_log` no tiene ningún
+  registro de esas dos tablas — pendiente verificar si los triggers existen
+  y están disparando (investigación directa 2/7/2026).
 - Módulo de cotizaciones de Ventas (sin plazo/período, columna `unidad_negocio`
   en `cotizaciones`).
 - Módulo de Cobranzas: condiciones de pago, adicionales, sistema de ageing,
   semáforo, notificaciones Teams + mail.
 - Circuito de facturación: tablas `pedidos` y `facturas`, arquitectura de
-  integración con Tango vía Edge Functions, tablas maestras importadas
+  integración con Tango vía Edge Functions diseñada. Las tablas maestras
   (`tango_articulos`, `tango_clientes`, `tango_vendedores`, `tango_depositos`,
-  `tango_config`).
+  `tango_config`) NUNCA se crearon en producción (confirmado por investigación
+  directa el 2/7/2026: no existen en el esquema, sin rastro en `audit_log`,
+  sin referencias en `index.html` ni en migraciones del repo). La importación
+  real de estas tablas sigue pendiente.
 - Hardening de seguridad: políticas `anon` permisivas eliminadas de `catalogo`,
   `clientes`, `contador`, `cotizaciones`; `execute` de `next_seq()` revocado a `anon`.
 - Consistencia visual entre dashboards Rental y Ventas.
@@ -127,6 +133,11 @@ Reemplaza procesos manuales y se conecta con el ERP **Tango Delta 5 (Axoft)**.
   implementado todavía.
 - Compartimentalización row-level entre usuarios internos (hoy todos los
   usuarios autenticados ven todos los datos) — consideración de seguridad futura.
+- Existe una tabla `contadores` (plural) además de `contador` (singular), con
+  estructura distinta (`nombre` + `seq`, 2 filas, sin foreign keys). No está
+  confirmado si las RPCs `next_seq()` / `next_seq_un()` la usan — hay que
+  revisar el código de esas funciones antes de tocar o eliminar cualquiera de
+  las dos tablas.
 
 ## Cómo entregar trabajo
 
