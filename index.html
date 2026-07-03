@@ -373,7 +373,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 
 /* ---------- PRINT ---------- */
 @media print{
-  @page{size:A4;margin:0;}
+  @page{size:A4;margin:12mm 14mm;}
   html,body{background:#fff;margin:0;padding:0;height:auto;}
   .side,.topbar,.cotz-form,.no-print,.toast{display:none !important;}
   .app,.main,.content{display:block;padding:0 !important;margin:0 !important;}
@@ -382,13 +382,18 @@ textarea.inp{resize:vertical;min-height:60px;}
   .prev-scale{transform:none !important;height:auto !important;}
   #docMount{margin:0;}
   .page{
-    box-shadow:none;margin:0 !important;width:210mm;
-    min-height:0 !important;height:297mm !important;max-height:297mm;
-    overflow:hidden;page-break-after:avoid;page-break-inside:avoid;break-inside:avoid;
-    display:flex;flex-direction:column;
+    box-shadow:none;margin:0 !important;width:auto;
+    padding:0 !important;overflow:visible;
+    display:block;
   }
   .page::after{content:none;}
-  /* nada después de .page debe forzar otra página */
+  /* el encabezado de la tabla de ítems se repite en cada hoja nueva */
+  .items thead{display:table-header-group;}
+  /* evita que una fila o un bloque de cierre quede partido entre dos hojas */
+  .page tr{page-break-inside:avoid;break-inside:avoid;}
+  .page .conds,.page .notas,.page .firma,.page .foot{page-break-inside:avoid;break-inside:avoid;}
+  /* el pie ya no se ancla al fondo vía flex (eso rompía la paginación): separación fija */
+  .page .foot{margin-top:18px;}
   .toast,.modal-bg{display:none !important;}
 
   /* Impresión del catálogo: oculta toda la app y muestra solo la capa */
