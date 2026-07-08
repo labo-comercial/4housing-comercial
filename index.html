@@ -745,7 +745,7 @@ const SB = {
 // ---- Mapeo entre el modelo interno (app) y las columnas de Supabase ----
 // App usa: {id, seq, ref, title, dateISO, clientId, client, attn, email, phone,
 //           currency, showTotal, items[], pago, validez, entrega, minimo,
-//           nota1, nota2, ivanote, state, created}
+//           showEntrega, showMinimo, nota1, nota2, ivanote, state, created}
 function quoteToRow(q){
   return {
     seq: q.seq, ref: q.ref, titulo: q.title, fecha_iso: q.dateISO,
@@ -753,6 +753,7 @@ function quoteToRow(q){
     email: q.email, telefono: q.phone, moneda: q.currency,
     mostrar_total: !!q.showTotal, items: q.items || [],
     pago: q.pago, validez: q.validez, entrega: q.entrega, minimo: q.minimo,
+    mostrar_entrega: q.showEntrega!==false, mostrar_minimo: q.showMinimo!==false,
     nota1: q.nota1, nota2: q.nota2, ivanote: q.ivanote, estado: q.state,
     comercial: q.comercial || null,
     unidad_negocio: q.unidad || 'rental',
@@ -789,6 +790,7 @@ function rowToQuote(r){
     email: r.email||'', phone: r.telefono||'', currency: r.moneda||'USD',
     showTotal: r.mostrar_total!==false, items: r.items||[],
     pago: r.pago||'', validez: r.validez||'', entrega: r.entrega||'', minimo: r.minimo||'',
+    showEntrega: r.mostrar_entrega!==false, showMinimo: r.mostrar_minimo!==false,
     nota1: r.nota1||'', nota2: r.nota2||'', ivanote: r.ivanote||'',
     comercial: r.comercial||'',
     unidad: r.unidad_negocio||'rental',
@@ -3853,6 +3855,7 @@ async function newQuote(clientId, unidad){
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:'', version:1,
     items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
+    showEntrega:true, showMinimo:true,
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
     ivanote:ivaDefault('USD', unidad),
@@ -3878,6 +3881,7 @@ async function cotizarOportunidad(oppId){
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:o.comercial||'', version:1,
     items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'' }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
+    showEntrega:true, showMinimo:true,
     nota1:'Los traslados e instalación se cotizan por separado.',
     nota2:'Cualquier modificación en las condiciones de la presente propuesta será informada oportunamente.',
     ivanote:ivaDefault('USD', unidad),
@@ -4001,8 +4005,14 @@ function renderEditor(isNew){
           <div class="field"><label>Validez de oferta</label><input id="e_validez" value="${esc(CUR.validez)}"></div>
         </div>
         <div class="frow c2">
-          <div class="field"><label>Plazo de entrega</label><input id="e_entrega" value="${esc(CUR.entrega)}"></div>
-          ${CUR.unidad==='ventas' ? '' : `<div class="field"><label>Plazo mínimo de alquiler</label><input id="e_minimo" value="${esc(CUR.minimo)}"></div>`}
+          <div class="field"><label style="display:flex;align-items:center;justify-content:space-between">Plazo de entrega
+            <span style="display:flex;align-items:center;gap:4px;font-weight:400;font-size:11px;color:#6f6c60">
+              <input type="checkbox" id="e_showentrega" ${CUR.showEntrega!==false?'checked':''} style="width:14px;height:14px;accent-color:var(--olive)"> Mostrar</span></label>
+            <input id="e_entrega" value="${esc(CUR.entrega)}"></div>
+          ${CUR.unidad==='ventas' ? '' : `<div class="field"><label style="display:flex;align-items:center;justify-content:space-between">Plazo mínimo de alquiler
+            <span style="display:flex;align-items:center;gap:4px;font-weight:400;font-size:11px;color:#6f6c60">
+              <input type="checkbox" id="e_showminimo" ${CUR.showMinimo!==false?'checked':''} style="width:14px;height:14px;accent-color:var(--olive)"> Mostrar</span></label>
+            <input id="e_minimo" value="${esc(CUR.minimo)}"></div>`}
         </div>
         <div class="frow c2">
           <div class="field"><label>Descuento</label><select id="e_desctipo"><option value="pct" ${CUR.descTipo!=='monto'?'selected':''}>Porcentaje (%)</option><option value="monto" ${CUR.descTipo==='monto'?'selected':''}>Monto fijo (${esc(CUR.currency)})</option></select></div>
@@ -4028,7 +4038,8 @@ function renderEditor(isNew){
     el.oninput=el.onchange=()=>{ CUR[key]= (el.type==='checkbox')?el.checked:el.value; if(after)after(); renderDoc(); }; };
   bind('e_clientname','client'); bind('e_attn','attn'); bind('e_phone','phone'); bind('e_email','email');
   bind('e_date','dateISO'); bind('e_state','state'); bind('e_comercial','comercial');
-  bind('e_pago','pago'); bind('e_validez','validez'); bind('e_entrega','entrega'); if(document.getElementById('e_minimo')) bind('e_minimo','minimo');
+  bind('e_pago','pago'); bind('e_validez','validez'); bind('e_entrega','entrega'); bind('e_showentrega','showEntrega');
+  if(document.getElementById('e_minimo')){ bind('e_minimo','minimo'); bind('e_showminimo','showMinimo'); }
   bind('e_desctipo','descTipo'); bind('e_descvalor','descValor');
   bind('e_nota1','nota1'); bind('e_nota2','nota2'); bind('e_ivanote','ivanote'); bind('e_showtotal','showTotal');
   // Moneda: además de cambiar la moneda, actualiza la leyenda del IVA si estaba en el texto por defecto
@@ -4204,12 +4215,17 @@ function renderDoc(){
       <div class="total-box"><span class="cur">${sym} TOTAL</span><span class="big">${fmt(quoteTotal(CUR))}</span></div>
     </div>`) : `<div class="total-bar"></div>`}
     ${esc(CUR.ivanote).trim() ? `<div class="note">${esc(CUR.ivanote)}</div>` : ''}
-    <div class="conds">
-      <div><div class="cd-top"><span class="cd-num">02.</span></div><div class="cd-label">FORMA DE PAGO</div><div class="cd-val">${esc(CUR.pago)}</div></div>
-      <div><div class="cd-top"><span class="cd-num">03.</span></div><div class="cd-label">VALIDEZ DE OFERTA</div><div class="cd-val">${esc(CUR.validez)}</div></div>
-      <div><div class="cd-top"><span class="cd-num">04.</span></div><div class="cd-label">PLAZO DE ENTREGA</div><div class="cd-val">${esc(CUR.entrega)}</div></div>
-      ${CUR.unidad==='ventas' ? '' : `<div><div class="cd-top"><span class="cd-num">05.</span></div><div class="cd-label">PLAZO MÍNIMO DE ALQUILER</div><div class="cd-val">${esc(CUR.minimo)}</div></div>`}
-    </div>
+    ${(()=>{
+      const conds = [
+        { num:'02.', label:'FORMA DE PAGO', val:CUR.pago },
+        { num:'03.', label:'VALIDEZ DE OFERTA', val:CUR.validez },
+      ];
+      if(CUR.showEntrega!==false) conds.push({ num:'04.', label:'PLAZO DE ENTREGA', val:CUR.entrega });
+      if(CUR.unidad!=='ventas' && CUR.showMinimo!==false) conds.push({ num:'05.', label:'PLAZO MÍNIMO DE ALQUILER', val:CUR.minimo });
+      return `<div class="conds" style="grid-template-columns:repeat(${conds.length},1fr)">${conds.map(c=>
+        `<div><div class="cd-top"><span class="cd-num">${c.num}</span></div><div class="cd-label">${c.label}</div><div class="cd-val">${esc(c.val)}</div></div>`
+      ).join('')}</div>`;
+    })()}
     ${(esc(CUR.nota1).trim()||esc(CUR.nota2).trim()) ? `<div class="notas"><div class="nt-head">NOTAS</div><div class="nt-body"><div>${esc(CUR.nota1)}</div><div>${esc(CUR.nota2)}</div></div></div>` : ''}
     <div class="firma"><span class="small">DEPARTAMENTO COMERCIAL</span>${CUR.comercial?`<span class="firma-nombre">${esc(CUR.comercial)}</span>`:''}</div>
     <div class="foot">
