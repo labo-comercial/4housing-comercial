@@ -33,9 +33,9 @@ a{color:var(--olive-deep);}
 .side nav{display:flex;flex-direction:column;gap:4px;}
 .nav-group-lbl{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#7e8a6c;font-weight:700;padding:14px 13px 5px;}
 .nav-group-lbl:first-child{padding-top:0;}
-.navbtn{display:flex;align-items:center;gap:11px;background:none;border:none;color:#cdd6bf;padding:11px 13px;border-radius:9px;font-size:14px;font-weight:600;text-align:left;letter-spacing:.01em;transition:.15s;}
-.navbtn svg{width:19px;height:19px;flex:none;}
-.navbtn:hover{background:rgba(255,255,255,.07);color:#fff;}
+.navbtn,.navlink{display:flex;align-items:center;gap:11px;background:none;border:none;color:#cdd6bf;padding:11px 13px;border-radius:9px;font-size:14px;font-weight:600;text-align:left;letter-spacing:.01em;transition:.15s;text-decoration:none;cursor:pointer;}
+.navbtn svg,.navlink svg{width:19px;height:19px;flex:none;}
+.navbtn:hover,.navlink:hover{background:rgba(255,255,255,.07);color:#fff;}
 .navbtn.active{background:var(--olive);color:var(--olive-ink);}
 .side .sp{flex:1;}
 .side .data-actions{display:flex;flex-direction:column;gap:7px;border-top:1px solid rgba(255,255,255,.12);padding-top:16px;}
@@ -425,7 +425,7 @@ textarea.inp{resize:vertical;min-height:60px;}
   /* cada etiqueta de unidad ocupa la fila completa y fuerza salto de línea */
   .nav-group-lbl{flex:0 0 100%;width:100%;padding:8px 4px 2px;font-size:10px;}
   .nav-group-lbl:first-child{padding-top:0;}
-  .navbtn{flex:1 1 0;min-width:0;justify-content:center;padding:9px 8px;font-size:12.5px;white-space:nowrap;}
+  .navbtn,.navlink{flex:1 1 0;min-width:0;justify-content:center;padding:9px 8px;font-size:12.5px;white-space:nowrap;}
   .side .sp{display:none;}
   .side .data-actions{flex-direction:row;flex-wrap:wrap;border-top:none;padding-top:0;width:100%;order:4;gap:6px;}
   .side .data-actions .lbl{display:none;}
@@ -452,9 +452,9 @@ textarea.inp{resize:vertical;min-height:60px;}
 }
 @media(max-width:420px){
   .kpi-grid{grid-template-columns:1fr;}
-  .navbtn{font-size:11.5px;padding:8px 6px;gap:6px;}
+  .navbtn,.navlink{font-size:11.5px;padding:8px 6px;gap:6px;}
   /* sin íconos en pantallas muy chicas: el texto manda */
-  .navbtn svg{display:none;}
+  .navbtn svg,.navlink svg{display:none;}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -478,6 +478,10 @@ textarea.inp{resize:vertical;min-height:60px;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4 7v10l8 4 8-4V7z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg>
         Catálogo
       </button>
+      <a class="navlink" href="indicadores/index.html" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+        Indicadores
+      </a>
       <div class="nav-group-lbl">Ventas</div>
       <button class="navbtn" data-view="dashboard_ventas">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
