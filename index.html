@@ -4248,6 +4248,27 @@ function renderDoc(){
       </div>
     </div>
   </div>`;
+  fitClientHeader(m);
+}
+// Encoge la tipografía del nombre/atención/email/teléfono del cliente cuando la
+// palabra más larga no entra en su columna, para que el navegador la parta en
+// líneas normales (por espacio) en vez de cortarla letra por letra a mitad de palabra.
+function fitClientHeader(root){
+  const ctx = (fitClientHeader._ctx ||= document.createElement('canvas').getContext('2d'));
+  const longestWord = t => (t||'').trim().split(/\s+/).reduce((max,w)=>{
+    const wd = ctx.measureText(w).width; return wd>max ? wd : max;
+  }, 0);
+  const shrink = (el, base, min, weight) => {
+    const text = el.textContent;
+    const avail = el.clientWidth;
+    if(!text || !text.trim() || !avail) return;
+    el.style.fontSize = '';
+    ctx.font = `${weight} ${base}px Archivo, sans-serif`;
+    const w = longestWord(text);
+    if(w > avail) el.style.fontSize = Math.max(min, base*avail/w*0.96).toFixed(1)+'px';
+  };
+  root.querySelectorAll('.cl-name').forEach(el=> shrink(el, 20, 12, '600'));
+  root.querySelectorAll('.cl-data').forEach(el=> shrink(el, 12, 8.5, '500'));
 }
 function fitPreview(){
   const wrap=document.querySelector('.prev-wrap'); const scale=document.getElementById('prevScale');
