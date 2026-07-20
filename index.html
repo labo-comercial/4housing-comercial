@@ -280,7 +280,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 .itemline .nums>div:nth-child(3){flex:0 0 130px;}
 .itemline .nums label{font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px;}
 .itemline .nums input,.itemline .nums select{width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff;box-sizing:border-box;}
-.itemline .subline{text-align:right;font-size:12px;color:var(--olive-deep);font-weight:700;margin-top:7px;}
+.itemline .subline{text-align:right;font-size:12px;color:var(--olive-deep);font-weight:700;}
 
 .help{font-size:11.5px;color:var(--muted);line-height:1.5;margin-top:4px;}
 .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#2f3a26;color:#fff;padding:13px 22px;border-radius:10px;font-size:13.5px;font-weight:600;opacity:0;transition:.25s;z-index:200;box-shadow:0 10px 30px rgba(0,0,0,.25);}
@@ -339,6 +339,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 .page .it-c{text-align:center;}
 .page .it-r{text-align:right;}
 .page .it-sub{text-align:right;font-weight:600;}
+.page table.items tbody tr.it-negrita td{font-weight:700;}
 .page .total-wrap{display:grid;grid-template-columns:1fr auto;align-items:stretch;margin-top:2px;}
 .page .total-label{display:flex;align-items:center;justify-content:flex-end;padding:0 26px;background:#f1efe6;font-weight:600;letter-spacing:.1em;font-size:14px;}
 .page .total-box{background:var(--olive);color:var(--olive-ink);padding:12px 30px;min-width:170px;text-align:right;}
@@ -3857,7 +3858,7 @@ async function newQuote(clientId, unidad){
     title:'OFERTA ECONÓMICA', dateISO:todayISO(),
     clientId: c?c.id:'', client:c?c.name:'', attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:'', version:1,
-    items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'' }],
+    items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'', negrita:false }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     showEntrega:true, showMinimo:true,
     nota1:'Los traslados e instalación se cotizan por separado.',
@@ -3883,7 +3884,7 @@ async function cotizarOportunidad(oppId){
     clientId: c?c.id:(o.clientId||''), client:c?c.name:oppClientName(o),
     attn:c?c.attn:'', email:c?c.email:'', phone:c?c.phone:'',
     currency:'USD', showTotal:true, descTipo:'pct', descValor:'', comercial:o.comercial||'', version:1,
-    items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'' }],
+    items:[{ catId:'', detail:'', detail2:'', price:'', qty:1, plazo:'', periodo:'', descTipo:'', descValor:'', negrita:false }],
     pago:'30 días FF.', validez:'30 días.', entrega:'Inmediato, sujeto a disponibilidad de stock.', minimo:'90 días.',
     showEntrega:true, showMinimo:true,
     nota1:'Los traslados e instalación se cotizan por separado.',
@@ -4095,7 +4096,12 @@ function renderItems(){
         <div><label style="font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px">Desc. línea</label><select class="i-desctipo" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff"><option value="">Sin descuento</option><option value="pct"${it.descTipo==='pct'?' selected':''}>Porcentaje (%)</option><option value="monto"${it.descTipo==='monto'?' selected':''}>Monto fijo (${esc(CUR.currency)})</option></select></div>
         <div class="i-descval-wrap"${it.descValor?'':' style="display:none"'}><label style="font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:700;display:block;margin-bottom:3px">Valor</label><input class="i-descvalor" type="number" value="${it.descValor||''}" placeholder="0" style="width:100%;border:1px solid var(--line-strong);border-radius:7px;padding:7px 8px;font-size:13px;background:#fff"></div>
       </div>
-      <div class="subline">${itemTieneDesc(it)?`<span style="color:#8a8578">Bruto: ${esc(CUR.currency)} ${fmt(itemBruto(it))} · Desc: −${esc(CUR.currency)} ${fmt(itemDescMonto(it))}</span><br>`:''}Subtotal: ${esc(CUR.currency)} ${fmt(itemSubtotal(it))}</div>
+      <div class="subline-row" style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:7px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#37432c;cursor:pointer;user-select:none">
+          <input type="checkbox" class="i-negrita" ${it.negrita?'checked':''} style="width:15px;height:15px;accent-color:var(--olive)"> Negrita
+        </label>
+        <div class="subline">${itemTieneDesc(it)?`<span style="color:#8a8578">Bruto: ${esc(CUR.currency)} ${fmt(itemBruto(it))} · Desc: −${esc(CUR.currency)} ${fmt(itemDescMonto(it))}</span><br>`:''}Subtotal: ${esc(CUR.currency)} ${fmt(itemSubtotal(it))}</div>
+      </div>
     </div>`).join('');
   el.querySelectorAll('.itemline').forEach(line=>{
     const i=+line.dataset.i, it=CUR.items[i];
@@ -4106,6 +4112,7 @@ function renderItems(){
     line.querySelector('.i-detail2').oninput=e=>{ it.detail2=e.target.value; renderDoc(); };
     line.querySelector('.i-price').oninput=e=>{ it.price=e.target.value; sub(line,it); renderDoc(); };
     line.querySelector('.i-qty').oninput=e=>{ it.qty=e.target.value; sub(line,it); renderDoc(); };
+    line.querySelector('.i-negrita').onchange=e=>{ it.negrita=e.target.checked; renderDoc(); };
     { const pl=line.querySelector('.i-plazo'); if(pl) pl.oninput=e=>{ it.plazo=e.target.value; sub(line,it); renderDoc(); }; }
     // Descuento de línea
     const descTipoSel=line.querySelector('.i-desctipo'),
@@ -4146,8 +4153,8 @@ function sub(line,it){
   const pre = itemTieneDesc(it) ? `<span style="color:#8a8578">Bruto: ${CUR.currency} ${fmt(itemBruto(it))} · Desc: −${CUR.currency} ${fmt(itemDescMonto(it))}</span><br>` : '';
   sl.innerHTML = pre + 'Subtotal: '+CUR.currency+' '+fmt(itemSubtotal(it));
 }
-function addItem(){ CUR.items.push({catId:'',detail:'',detail2:'',price:'',qty:1,plazo:'',periodo:'',descTipo:'',descValor:''}); renderItems(); renderDoc(); }
-function delItem(i){ CUR.items.splice(i,1); if(!CUR.items.length) CUR.items.push({catId:'',detail:'',detail2:'',price:'',qty:1,plazo:'',periodo:'',descTipo:'',descValor:''}); renderItems(); renderDoc(); }
+function addItem(){ CUR.items.push({catId:'',detail:'',detail2:'',price:'',qty:1,plazo:'',periodo:'',descTipo:'',descValor:'',negrita:false}); renderItems(); renderDoc(); }
+function delItem(i){ CUR.items.splice(i,1); if(!CUR.items.length) CUR.items.push({catId:'',detail:'',detail2:'',price:'',qty:1,plazo:'',periodo:'',descTipo:'',descValor:'',negrita:false}); renderItems(); renderDoc(); }
 
 /* ---- live document render (mirrors the source PDF) ---- */
 function renderDoc(){
@@ -4173,7 +4180,7 @@ function renderDoc(){
       descTag = `<div class="it-desc-tag">Descuento ${etq}</div>`;
     }
     return `
-    <tr>
+    <tr${it.negrita?' class="it-negrita"':''}>
       <td class="it-num">${String(i+1).padStart(2,'0')}</td>
       <td class="it-detail">${detalle}${sub2}${descTag}</td>
       <td class="it-r">${fmt(num(it.price))}</td>
