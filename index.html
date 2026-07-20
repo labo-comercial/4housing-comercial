@@ -2663,8 +2663,17 @@ function ventasKPIs(){
   const ganadasMes = v.filter(o=> o.state==='ganada' && (o.updated||o.created)>=tm).length;
   // cotizadas en el mes: las que llegaron a estado cotizado o más avanzado este mes
   const cotizadasMes = v.filter(o=> ['enviada','negociacion','ganada','perdida'].includes(o.state) && (o.updated||o.created)>=tm).length;
-  const pipeline = v.filter(o=> o.state!=='perdida' && o.state!=='ganada' && o.state!=='desestimada')
-                    .reduce((s,o)=> s + (o.valor||0), 0);
+  // Pipeline (USD): valor "en juego" = cotizaciones formales enviadas o en negociación
+  // (monto real desde la cotización) + oportunidades SIN cotización en esos mismos estados
+  // (monto estimado desde o.valor). Solo USD, para no mezclar monedas.
+  const EN_JUEGO = ['enviada','negociacion'];
+  const qVentas = DB.quotes.filter(q=> q.unidad==='ventas' && EN_JUEGO.includes(q.state)
+                                     && (q.currency||'USD')==='USD');
+  const pipelineQuotes = qVentas.reduce((s,q)=> s + quoteTotal(q), 0);
+  const pipelineOpps = v.filter(o=> EN_JUEGO.includes(o.state) && !o.cotizacionId
+                                  && (o.moneda||'USD')==='USD')
+                        .reduce((s,o)=> s + (o.valor||0), 0);
+  const pipeline = pipelineQuotes + pipelineOpps;
   const cerradas = v.filter(o=> o.state==='ganada' || o.state==='perdida').length;
   const conv = cerradas>0 ? Math.round(100*v.filter(o=>o.state==='ganada').length/cerradas) : 0;
   return { total:v.length, nuevasHoy, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, conv };
