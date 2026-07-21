@@ -4420,9 +4420,13 @@ function imprimirDocAislado(node, titulo){
   const lanzar = ()=>{
     if(lanzado) return; // no imprimir dos veces (fonts.ready + red de seguridad)
     lanzado = true;
+    // Safari toma el nombre del PDF del título de la VENTANA principal (no del
+    // iframe), así que lo seteamos acá y lo restauramos después.
+    const prevTitle = document.title;
+    document.title = titulo || document.title;
     try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }
     catch(e){ console.warn('print iframe:', e); }
-    finally{ setTimeout(()=>{ try{ ifr.remove(); }catch(_){} }, 1500); }
+    finally{ setTimeout(()=>{ document.title = prevTitle; try{ ifr.remove(); }catch(_){} }, 1500); }
   };
   // Esperar a que carguen las fuentes dentro del iframe (si no, cambia la tipografía)
   const w = ifr.contentWindow;
