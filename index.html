@@ -2698,8 +2698,11 @@ VIEWS.dashboard_ventas = function(){
     <div class="kpi-value">${value}</div>
     <div class="kpi-sub">${sub||''}</div></div>`;
   const f = ventasPanelFiltro;
-  // lista de abajo, filtrada según el KPI activo (sin convertidas ni desestimadas)
-  let list = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
+  // lista de abajo: TODAS las oportunidades de Ventas (menos desestimadas), para
+  // que al tocar un indicador se vean las que lo componen. Antes excluía las que
+  // ya tenían cotización (!o.cotizacionId), y eso vaciaba los filtros "Cotizadas
+  // a la espera" y "Ganadas" (esas oportunidades siempre tienen cotización).
+  let list = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && o.state!=='desestimada');
   if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
   if(f==='activas')  list = list.filter(o=> o.state==='nuevo'||o.state==='borrador');
   else if(f==='enviada') list = list.filter(o=> o.state==='enviada');
