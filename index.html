@@ -2663,11 +2663,29 @@ function ventasKPIs(){
   const ganadasMes = v.filter(o=> o.state==='ganada' && (o.updated||o.created)>=tm).length;
   // cotizadas en el mes: las que llegaron a estado cotizado o más avanzado este mes
   const cotizadasMes = v.filter(o=> ['enviada','negociacion','ganada','perdida'].includes(o.state) && (o.updated||o.created)>=tm).length;
-  const pipeline = v.filter(o=> o.state!=='perdida' && o.state!=='ganada' && o.state!=='desestimada')
-                    .reduce((s,o)=> s + (o.valor||0), 0);
+  // Pipeline = suma de las COTIZACIONES de Ventas en estado Borrador,
+  // Cotizado-Enviado o En negociación (decisión de Pablo, 2026-07-21).
+  // Antes sumaba el "valor estimado" cargado a mano en las oportunidades,
+  // que casi siempre estaba vacío. Se toma solo la ÚLTIMA versión de cada
+  // grupo (mismo seq) para no contar dos veces una cotización versionada.
+  const PIPE_STATES = ['borrador','enviada','negociacion'];
+  const qv = DB.quotes.filter(q=> q.unidad==='ventas' || q.unidad==='ambas');
+  const ultimaPorGrupo = new Map(); // seq (o id suelto) -> cotización de mayor versión
+  qv.forEach(q=>{
+    const key = (q.seq!=null) ? ('s'+q.seq) : ('id'+q.id);
+    const ver = q.version || parseVer(q.ref) || 1;
+    const actual = ultimaPorGrupo.get(key);
+    if(!actual || ver > (actual.version || parseVer(actual.ref) || 1)) ultimaPorGrupo.set(key, q);
+  });
+  let pipeline = 0, pipelineArs = 0;
+  ultimaPorGrupo.forEach(q=>{
+    if(!PIPE_STATES.includes(q.state)) return;
+    const monto = quoteTotal(q);
+    if(q.currency==='ARS') pipelineArs += monto; else pipeline += monto;
+  });
   const cerradas = v.filter(o=> o.state==='ganada' || o.state==='perdida').length;
   const conv = cerradas>0 ? Math.round(100*v.filter(o=>o.state==='ganada').length/cerradas) : 0;
-  return { total:v.length, nuevasHoy, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, conv };
+  return { total:v.length, nuevasHoy, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, pipelineArs, conv };
 }
 
 let ventasPanelFiltro = ''; // '' | 'activas' | 'enviada' | 'ganada'
@@ -2697,7 +2715,7 @@ VIEWS.dashboard_ventas = function(){
       ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
       ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2', {onclick:"toggleVentasFiltro('ganada')", active:f==='ganada'})}
       ${kpiCard('Conversión', k.conv, 10, 'Ganadas / cerradas · obj. 10%', {pct:true})}
-      ${kpiCard('Pipeline', (k.pipeline?('USD '+fmt(k.pipeline)):'—'), 0, 'Valor estimado en juego (USD)')}
+      ${kpiCard('Pipeline', (k.pipeline?('USD '+fmt(k.pipeline)):'—'), 0, 'Cotizaciones en borrador, enviadas o en negociación (USD)'+(k.pipelineArs?(' · + $ '+fmt(k.pipelineArs)+' ARS'):''))}
     </div>
     <div class="card"><div class="card-b" style="padding:0">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
