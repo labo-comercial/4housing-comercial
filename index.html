@@ -385,11 +385,10 @@ textarea.inp{resize:vertical;min-height:60px;}
     box-shadow:none;margin:0 !important;width:auto;
     padding:0 !important;overflow:visible;
     display:block;
+    /* la hoja se ajusta al contenido: evita la 2da hoja fantasma que generaba
+       min-height:297mm al desbordar el área imprimible (~273mm). */
+    min-height:0 !important;
   }
-  /* Cotización impresa vía iframe aislado (body.printing-doc): la hoja se
-     ajusta al contenido. Sin esto, min-height:297mm desborda a una 2da hoja. */
-  body.printing-doc{margin:0;background:#fff;}
-  body.printing-doc .page{min-height:0 !important;box-shadow:none !important;margin:0 !important;}
   .page::after{content:none;}
   /* el encabezado de la tabla de ítems se repite en cada hoja nueva */
   .items thead{display:table-header-group;}
@@ -4393,53 +4392,20 @@ async function printQuote(){
   renderEditor(false);
   const sel=document.getElementById('e_state'); if(sel) sel.value='enviada';
   toast('Cotización marcada como Enviada');
-  const page = document.querySelector('#docMount .page');
-  if(!page){ window.print(); return; } // fallback defensivo
-  imprimirDocAislado(page, quoteFileName());
-}
-
-// Imprime UN nodo (.page) en un iframe aislado, con about:blank como URL.
-// Así el navegador NO estampa la URL del sitio en el pie (era el
-// https://labo-comercial.github.io/... que aparecía en cada hoja), y como
-// imprime solo la cotización (sin la app), no genera la 2da hoja fantasma.
-// Reusa TODOS los estilos y fuentes del documento para no perder el diseño.
-let _tituloAppOriginal = null; // título real de la app, capturado una sola vez
-function imprimirDocAislado(node, titulo){
-  if(_tituloAppOriginal === null) _tituloAppOriginal = document.title;
-  const estilos = Array.from(document.querySelectorAll('style, link[rel="stylesheet"], link[rel="preconnect"]'))
-                       .map(el=>el.outerHTML).join('\n');
-  const html = '<!doctype html><html lang="es"><head><meta charset="utf-8">'
-             + '<title>'+ esc(titulo||document.title) +'</title>'
-             + estilos
-             + '</head><body class="printing-doc">' + node.outerHTML + '</body></html>';
-  const ifr = document.createElement('iframe');
-  ifr.setAttribute('aria-hidden','true');
-  ifr.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden;';
-  document.body.appendChild(ifr);
-  const doc = ifr.contentWindow.document;
-  doc.open(); doc.write(html); doc.close();
-  let lanzado = false;
-  const lanzar = ()=>{
-    if(lanzado) return; // no imprimir dos veces (fonts.ready + red de seguridad)
-    lanzado = true;
-    // Safari toma el nombre del PDF del título de la VENTANA principal (no del
-    // iframe). Lo seteamos acá y lo restauramos MUCHO después (60s): el flujo
-    // "Guardar como PDF" es manual y lee el título recién al abrir el diálogo
-    // de guardado, varios segundos después de print(). Restaurar antes (1,5s)
-    // hacía que el archivo saliera con el título de la app.
-    document.title = titulo || _tituloAppOriginal;
-    try{ ifr.contentWindow.focus(); ifr.contentWindow.print(); }
-    catch(e){ console.warn('print iframe:', e); }
-    finally{ setTimeout(()=>{ document.title = _tituloAppOriginal; try{ ifr.remove(); }catch(_){} }, 60000); }
-  };
-  // Esperar a que carguen las fuentes dentro del iframe (si no, cambia la tipografía)
-  const w = ifr.contentWindow;
-  if(w.document.fonts && w.document.fonts.ready){
-    w.document.fonts.ready.then(()=> setTimeout(lanzar, 60));
-    setTimeout(lanzar, 1200); // red de seguridad si fonts.ready nunca resuelve
-  } else {
-    setTimeout(lanzar, 500);
-  }
+  // Impresión directa de la ventana: en Safari window.print() BLOQUEA hasta que
+  // termina el flujo (incluido "Guardar como PDF"), así que el título —del que
+  // Safari toma el nombre del archivo— nunca se revierte antes de tiempo. El
+  // @media print oculta la app y deja solo .page (con min-height:0 → una hoja).
+  const scale=document.getElementById('prevScale');
+  const prev = scale? scale.style.transform : '';
+  if(scale) scale.style.transform='none';
+  const prevTitle = document.title;
+  document.title = quoteFileName();
+  setTimeout(()=>{
+    window.print();
+    if(scale) scale.style.transform=prev;
+    setTimeout(()=>{ document.title = prevTitle; }, 500);
+  }, 60);
 }
 
 /* ================= RESPALDO / RECARGA ================= */
