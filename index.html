@@ -2656,69 +2656,104 @@ async function saveNewOppFrom(view){
 
 /* ================= PANEL DE VENTAS ================= */
 function startOfMonthTs(){ const d=new Date(); return new Date(d.getFullYear(),d.getMonth(),1).getTime(); }
-function ventasKPIs(){
-  const v = DB.opps.filter(o=> o.unidad==='ventas' || o.unidad==='ambas');
-  const tm = startOfMonthTs();
-  const t0 = startOfToday();
-  const nuevasHoy = v.filter(o=> o.created && o.created>=t0).length;
-  const enProceso = v.filter(o=> o.state==='nuevo' || o.state==='borrador').length;
-  const cotizadas = v.filter(o=> o.state==='enviada').length;           // a la espera de respuesta
-  const ganadasMes = v.filter(o=> o.state==='ganada' && (o.updated||o.created)>=tm).length;
-  // cotizadas en el mes: las que llegaron a estado cotizado o más avanzado este mes
-  const cotizadasMes = v.filter(o=> ['enviada','negociacion','ganada','perdida'].includes(o.state) && (o.updated||o.created)>=tm).length;
-  // Pipeline = suma de las COTIZACIONES de Ventas en estado Borrador,
-  // Cotizado-Enviado o En negociación (decisión de Pablo, 2026-07-21).
-  // Antes sumaba el "valor estimado" cargado a mano en las oportunidades,
-  // que casi siempre estaba vacío. Se toma solo la ÚLTIMA versión de cada
-  // grupo (mismo seq) para no contar dos veces una cotización versionada.
-  const PIPE_STATES = ['borrador','enviada','negociacion'];
+// Cotizaciones (OE) de Ventas, quedándose con la ÚLTIMA versión de cada grupo
+// (mismo seq) para no contar/duplicar versiones anteriores.
+function quotesVentasUlt(){
   const qv = DB.quotes.filter(q=> q.unidad==='ventas' || q.unidad==='ambas');
-  const ultimaPorGrupo = new Map(); // seq (o id suelto) -> cotización de mayor versión
+  const m = new Map();
   qv.forEach(q=>{
     const key = (q.seq!=null) ? ('s'+q.seq) : ('id'+q.id);
     const ver = q.version || parseVer(q.ref) || 1;
-    const actual = ultimaPorGrupo.get(key);
-    if(!actual || ver > (actual.version || parseVer(actual.ref) || 1)) ultimaPorGrupo.set(key, q);
+    const a = m.get(key);
+    if(!a || ver > (a.version || parseVer(a.ref) || 1)) m.set(key, q);
   });
+  return [...m.values()];
+}
+function ventasKPIs(){
+  const tm = startOfMonthTs();
+  const t0 = startOfToday();
+  // Los indicadores de OPORTUNIDAD cuentan solo oportunidades VIGENTES (sin
+  // cotizar): una vez cotizada, la OP deja de ser oportunidad y vive como OE.
+  const oppVig = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
+  const nuevasHoy = oppVig.filter(o=> o.created && o.created>=t0).length;
+  const enProceso = oppVig.filter(o=> o.state==='nuevo' || o.state==='borrador').length;
+  // Los indicadores de COTIZACIÓN cuentan OE (última versión de cada grupo).
+  const q = quotesVentasUlt();
+  const cotizadas    = q.filter(x=> x.state==='enviada').length;                         // a la espera de respuesta
+  const cotizadasMes = q.filter(x=> ['enviada','negociacion','ganada','perdida'].includes(x.state) && x.created>=tm).length;
+  const ganadasMes   = q.filter(x=> x.state==='ganada' && x.created>=tm).length;
+  const cerradas     = q.filter(x=> x.state==='ganada' || x.state==='perdida').length;
+  const conv         = cerradas>0 ? Math.round(100*q.filter(x=>x.state==='ganada').length/cerradas) : 0;
+  // Pipeline = OE en borrador / enviada / negociación (USD; ARS aparte).
   let pipeline = 0, pipelineArs = 0;
-  ultimaPorGrupo.forEach(q=>{
-    if(!PIPE_STATES.includes(q.state)) return;
-    const monto = quoteTotal(q);
-    if(q.currency==='ARS') pipelineArs += monto; else pipeline += monto;
+  q.forEach(x=>{
+    if(!['borrador','enviada','negociacion'].includes(x.state)) return;
+    const monto = quoteTotal(x);
+    if(x.currency==='ARS') pipelineArs += monto; else pipeline += monto;
   });
-  const cerradas = v.filter(o=> o.state==='ganada' || o.state==='perdida').length;
-  const conv = cerradas>0 ? Math.round(100*v.filter(o=>o.state==='ganada').length/cerradas) : 0;
-  return { total:v.length, nuevasHoy, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, pipelineArs, conv };
+  return { nuevasHoy, enProceso, cotizadas, cotizadasMes, ganadasMes, pipeline, pipelineArs, conv };
 }
 
-let ventasPanelFiltro = ''; // '' | 'activas' | 'enviada' | 'ganada'
+let ventasPanelFiltro = ''; // '' | 'hoy' | 'activas' | 'enviada' | 'cotizadas_mes' | 'ganada'
+
+// Fila compacta de cotización (OE) para el panel; al clickear abre la cotización.
+function rowQuoteMini(x){
+  const origen = oppOrigenRef(x.id); // trazabilidad: "desde OP-XXXX"
+  return `<tr class="clickable" data-id="${x.id}">
+    <td class="nowrap"><b>${esc(x.ref||'—')}</b>${origen?`<div class="help" style="font-size:10px;margin-top:2px">desde ${esc(origen)}</div>`:''}</td>
+    <td>${esc(upperName(x.client)||'—')}</td>
+    <td>${esc(titleCase(x.comercial)||'—')}</td>
+    <td class="nowrap"><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
+    <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
+    <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||'')}</td>
+  </tr>`;
+}
 
 VIEWS.dashboard_ventas = function(){
   setHeader('Ventas','Indicadores comerciales');
   const k = ventasKPIs();
-  const card = (label,value,sub)=>`<div class="kpi" style="cursor:default">
-    <div class="kpi-label">${label}</div>
-    <div class="kpi-value">${value}</div>
-    <div class="kpi-sub">${sub||''}</div></div>`;
   const f = ventasPanelFiltro;
-  // lista de abajo: TODAS las oportunidades de Ventas (menos desestimadas), para
-  // que al tocar un indicador se vean las que lo componen. Antes excluía las que
-  // ya tenían cotización (!o.cotizacionId), y eso vaciaba los filtros "Cotizadas
-  // a la espera" y "Ganadas" (esas oportunidades siempre tienen cotización).
-  let list = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && o.state!=='desestimada');
-  if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
-  if(f==='activas')  list = list.filter(o=> o.state==='nuevo'||o.state==='borrador');
-  else if(f==='enviada') list = list.filter(o=> o.state==='enviada');
-  else if(f==='ganada')  list = list.filter(o=> o.state==='ganada');
-  else if(f==='hoy')     list = list.filter(o=> o.created && o.created>=startOfToday());
-  list = list.sort((a,b)=>b.created-a.created);
+  // Modo cotización: los indicadores que hablan de OE muestran cotizaciones;
+  // el resto muestra oportunidades vigentes (sin cotizar).
+  const modoCotiz = (f==='enviada' || f==='cotizadas_mes' || f==='ganada');
+
+  let bodyHtml, tituloLista, subLista;
+  if(modoCotiz){
+    let qs = quotesVentasUlt();
+    if(filtroVendedor) qs = qs.filter(q=> q.comercial===filtroVendedor);
+    if(f==='enviada')            qs = qs.filter(q=> q.state==='enviada');
+    else if(f==='ganada')        qs = qs.filter(q=> q.state==='ganada');
+    else if(f==='cotizadas_mes') qs = qs.filter(q=> ['enviada','negociacion','ganada','perdida'].includes(q.state) && q.created>=startOfMonthTs());
+    qs.sort((a,b)=> b.created-a.created);
+    tituloLista = 'Cotizaciones · ' + ({enviada:'a la espera', ganada:'ganadas', cotizadas_mes:'del mes'}[f]||'');
+    subLista = 'Tocá de nuevo el indicador para quitar el filtro';
+    bodyHtml = qs.length ? `<table class="grid">
+        <thead><tr><th>Ref.</th><th>Cliente</th><th>Comercial</th><th>Estado</th><th class="r">Total</th><th class="r">Fecha</th></tr></thead>
+        <tbody>${qs.map(rowQuoteMini).join('')}</tbody></table>`
+      : `<div class="empty" style="padding:40px">No hay cotizaciones con este filtro.</div>`;
+  } else {
+    // Oportunidades VIGENTES (sin cotizar): una vez cotizada, la OP deja de ser
+    // oportunidad y vive como OE en la pestaña Cotizaciones (con su "desde OP-…").
+    let list = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
+    if(filtroVendedor) list = list.filter(o=>o.comercial===filtroVendedor);
+    if(f==='activas')  list = list.filter(o=> o.state==='nuevo'||o.state==='borrador');
+    else if(f==='hoy') list = list.filter(o=> o.created && o.created>=startOfToday());
+    list.sort((a,b)=>b.created-a.created);
+    tituloLista = 'Oportunidades de ventas' + (f?' · filtradas':'');
+    subLista = f ? 'Tocá de nuevo el indicador para quitar el filtro'
+                 : 'Oportunidades aún sin cotizar. Las cotizadas viven en la pestaña Cotizaciones.';
+    bodyHtml = list.length ? `<table class="grid">
+        <thead><tr><th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th></tr></thead>
+        <tbody>${list.map(rowOpp).join('')}</tbody></table>`
+      : `<div class="empty" style="padding:40px">No hay oportunidades${f?' con este filtro':' sin cotizar'}.</div>`;
+  }
 
   C().innerHTML = `
     <div class="kpi-grid" style="margin-bottom:22px">
       ${kpiCard('Oportunidades nuevas hoy', k.nuevasHoy, 0, 'Cargadas hoy', {onclick:"toggleVentasFiltro('hoy')", active:f==='hoy'})}
       ${kpiCard('Oportunidades activas', k.enProceso, 5, 'Nuevas y en proceso · obj. 5', {onclick:"toggleVentasFiltro('activas')", active:f==='activas'})}
       ${kpiCard('Cotizadas a la espera', k.cotizadas, 20, 'Esperando respuesta · obj. 20', {onclick:"toggleVentasFiltro('enviada')", active:f==='enviada'})}
-      ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20')}
+      ${kpiCard('Cotizadas (mes)', k.cotizadasMes, 20, 'Generadas este mes · obj. 20', {onclick:"toggleVentasFiltro('cotizadas_mes')", active:f==='cotizadas_mes'})}
       ${kpiCard('Ganadas (mes)', k.ganadasMes, 2, 'Cerradas con éxito · obj. 2', {onclick:"toggleVentasFiltro('ganada')", active:f==='ganada'})}
       ${kpiCard('Conversión', k.conv, 10, 'Ganadas / cerradas · obj. 10%', {pct:true})}
       ${kpiCard('Pipeline', (k.pipeline?('USD '+fmt(k.pipeline)):'—'), 0, 'Cotizaciones en borrador, enviadas o en negociación (USD)'+(k.pipelineArs?(' · + $ '+fmt(k.pipelineArs)+' ARS'):''))}
@@ -2726,17 +2761,15 @@ VIEWS.dashboard_ventas = function(){
     <div class="card"><div class="card-b" style="padding:0">
       <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border-bottom:1px solid var(--line)">
         <div>
-          <div style="font-size:15px;font-weight:700;color:#37432c">Oportunidades de ventas${f?' · filtradas':''}</div>
-          <div class="help" style="margin-top:3px">${f?'Tocá de nuevo el indicador para quitar el filtro':'Seguimiento completo del pipeline de la unidad Ventas'}</div>
+          <div style="font-size:15px;font-weight:700;color:#37432c">${tituloLista}</div>
+          <div class="help" style="margin-top:3px">${subLista}</div>
         </div>
         <button class="btn" onclick="newOppVentas()">${ICO.plus} Nueva oportunidad</button>
       </div>
-      ${list.length ? `<table class="grid">
-          <thead><tr><th>Ref.</th><th>Cliente / Organismo</th><th>Tipo</th><th>Prioridad</th><th>Estado</th><th>Fecha límite</th><th class="r">Valor</th></tr></thead>
-          <tbody>${list.map(rowOpp).join('')}</tbody></table>`
-        : `<div class="empty" style="padding:40px">No hay oportunidades${f?' con este filtro':' de ventas todavía'}.</div>`}
+      ${bodyHtml}
     </div></div>`;
-  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> openOpp(tr.dataset.id));
+  const abre = modoCotiz ? (id)=>editQuote(id) : (id)=>openOpp(id);
+  C().querySelectorAll('tr.clickable').forEach(tr=> tr.onclick=()=> abre(tr.dataset.id));
 };
 
 function toggleVentasFiltro(f){
