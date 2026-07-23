@@ -762,6 +762,7 @@ function quoteToRow(q){
     pago: q.pago, validez: q.validez, entrega: q.entrega, minimo: q.minimo,
     mostrar_entrega: q.showEntrega!==false, mostrar_minimo: q.showMinimo!==false,
     nota1: q.nota1, nota2: q.nota2, ivanote: q.ivanote, estado: q.state,
+    proyecto: q.proyecto || null, fecha_envio: q.fechaEnvio || null,
     comercial: q.comercial || null,
     unidad_negocio: q.unidad || 'rental',
     desc_tipo: q.descTipo || 'pct', desc_valor: (q.descValor===''||q.descValor==null)?0:num(q.descValor),
@@ -802,6 +803,7 @@ function rowToQuote(r){
     comercial: r.comercial||'',
     unidad: r.unidad_negocio||'rental',
     descTipo: r.desc_tipo||'pct', descValor: (r.desc_valor!=null && r.desc_valor!==0) ? r.desc_valor : '',
+    proyecto: r.proyecto||'', fechaEnvio: r.fecha_envio||'',
     state: r.estado||'borrador', created: r.created_at ? Date.parse(r.created_at) : Date.now()
   };
 }
@@ -1324,6 +1326,8 @@ VIEWS.quotes = function(){
           ${sortTh('Estado','state','quoteSort','VIEWS.quotes')}
           ${sortTh('Total','total','quoteSort','VIEWS.quotes','r')}
           ${sortTh('Fecha','fecha','quoteSort','VIEWS.quotes','r')}
+          <th>Proyecto</th>
+          <th class="nowrap">Fecha de envío</th>
           <th></th>
         </tr></thead>
         <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
@@ -1361,6 +1365,8 @@ function rowOppRental(o){
     <td class="nowrap"><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
     <td class="r nowrap">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
     <td class="r nowrap">${o.fechaLimite?fmtFecha(o.fechaLimite):new Date(o.created).toLocaleDateString('es-AR')}</td>
+    <td style="color:#94917f">—</td>
+    <td class="r nowrap" style="color:#94917f">—</td>
     <td></td>
   </tr>`;
 }
@@ -1397,6 +1403,11 @@ function oppOrigenRef(quoteId){
   return o ? (o.ref||'') : '';
 }
 
+// Celdas "Proyecto" y "Fecha de envío" para las filas de cotización.
+function celdasProyFecha(x){
+  return `<td>${x.proyecto?esc(x.proyecto):'<span style="color:#94917f">—</span>'}</td>`
+       + `<td class="r nowrap" style="color:#94917f">${x.fechaEnvio? new Date(x.fechaEnvio).toLocaleDateString('es-AR') : '—'}</td>`;
+}
 function rowQuote(x, o){
   o = o || {};
   const opts = STATES.map(s=>`<option value="${s.id}" ${s.id===x.state?'selected':''}>${s.label}</option>`).join('');
@@ -1415,6 +1426,7 @@ function rowQuote(x, o){
       </td>
       <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
       <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+      ${celdasProyFecha(x)}
       <td></td>
     </tr>`;
   }
@@ -1438,6 +1450,7 @@ function rowQuote(x, o){
     </td>
     <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
     <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    ${celdasProyFecha(x)}
     <td class="nowrap" onclick="event.stopPropagation()" style="text-align:right">
       <button class="btn sm ghost" title="Crear nueva versión (misma referencia)" onclick="newVersion('${x.id}')">${ICO.copy} Versión</button>
     </td>
@@ -1462,7 +1475,11 @@ async function setQuoteState(id, state){
   const q = DB.quotes.find(x=>x.id===id);
   if(!q) return;
   try{
-    await SB.updateQuote(id, {estado:state, updated_at:new Date().toISOString()});
+    const patch = {estado:state, updated_at:new Date().toISOString()};
+    // Fecha de envío: se registra la primera vez que pasa a "Cotizado-Enviado".
+    if(state==='enviada' && !q.fechaEnvio){ patch.fecha_envio = new Date().toISOString(); }
+    await SB.updateQuote(id, patch);
+    if(patch.fecha_envio) q.fechaEnvio = patch.fecha_envio;
     q.state = state;
     toast('Estado actualizado: '+stLabel(state));
     if(state==='ganada'){ await reloadDB(); await crearCobranzaDesdeQuote(id); }
@@ -2610,6 +2627,8 @@ VIEWS.ventas = function(){
           ${sortTh('Estado','state','ventasSort','VIEWS.ventas')}
           ${sortTh('Total','total','ventasSort','VIEWS.ventas','r')}
           ${sortTh('Fecha','fecha','ventasSort','VIEWS.ventas','r')}
+          <th>Proyecto</th>
+          <th class="nowrap">Fecha de envío</th>
           <th></th>
         </tr></thead>
         <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
@@ -4048,6 +4067,7 @@ function renderEditor(isNew){
           <div class="field"><label>Referencia (automática)</label><input id="e_ref" value="${esc(CUR.ref)}" readonly disabled title="El número se asigna automáticamente y no puede modificarse" style="background:#f1efe6;color:#6f6c60;cursor:not-allowed"></div>
           <div class="field"><label>Fecha</label><input id="e_date" type="date" value="${esc(CUR.dateISO)}"></div>
         </div>
+        <div class="field"><label>Proyecto <span class="help" style="font-weight:400">(referencia libre)</span></label><input id="e_proyecto" value="${esc(CUR.proyecto||'')}" placeholder="Ej.: SACDE Cutral Có · Campamento"></div>
         <div class="frow c2">
           <div class="field"><label>Moneda</label><select id="e_cur"><option value="USD" ${CUR.currency==='USD'?'selected':''}>USD (Dólares)</option><option value="ARS" ${CUR.currency==='ARS'?'selected':''}>ARS ($ Pesos)</option></select></div>
           <div class="field"><label>Estado</label><select id="e_state">${STATES.map(s=>`<option value="${s.id}" ${s.id===CUR.state?'selected':''}>${s.label}</option>`).join('')}</select></div>
@@ -4099,6 +4119,7 @@ function renderEditor(isNew){
     el.oninput=el.onchange=()=>{ CUR[key]= (el.type==='checkbox')?el.checked:el.value; if(after)after(); renderDoc(); }; };
   bind('e_clientname','client'); bind('e_attn','attn'); bind('e_phone','phone'); bind('e_email','email');
   bind('e_date','dateISO'); bind('e_state','state'); bind('e_comercial','comercial');
+  bind('e_proyecto','proyecto');
   bind('e_pago','pago'); bind('e_validez','validez'); bind('e_entrega','entrega'); bind('e_showentrega','showEntrega');
   if(document.getElementById('e_minimo')){ bind('e_minimo','minimo'); bind('e_showminimo','showMinimo'); }
   bind('e_desctipo','descTipo'); bind('e_descvalor','descValor');
@@ -4358,6 +4379,7 @@ async function saveQuote(opts){
     if(!CUR.id){
       // Cotización nueva: pedir número de oferta atómico a Supabase
       CUR.state = opts.state || 'borrador';
+      if(CUR.state==='enviada' && !CUR.fechaEnvio) CUR.fechaEnvio = new Date().toISOString();
       if(!CUR.seq){
         CUR.seq = await SB.nextSeq(CUR.unidad);  // serie correlativa propia de la unidad
         CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
@@ -4374,6 +4396,7 @@ async function saveQuote(opts){
       await reloadDB();
     } else {
       if(opts.state) CUR.state = opts.state;
+      if(CUR.state==='enviada' && !CUR.fechaEnvio) CUR.fechaEnvio = new Date().toISOString();
       await SB.updateQuote(CUR.id, quoteToRow(CUR));
       await reloadDB();
     }
