@@ -1474,8 +1474,9 @@ async function setQuoteState(id, state){
   if(!q) return;
   try{
     const patch = {estado:state, updated_at:new Date().toISOString()};
-    // Fecha de envío: se registra la primera vez que pasa a "Cotizado-Enviado".
-    if(state==='enviada' && !q.fechaEnvio){ patch.fecha_envio = new Date().toISOString(); }
+    // Fecha de envío: se actualiza a AHORA cada vez que se pasa a "Cotizado-Enviado"
+    // (registra el último envío). No se toca al volver a otros estados.
+    if(state==='enviada'){ patch.fecha_envio = new Date().toISOString(); }
     await SB.updateQuote(id, patch);
     if(patch.fecha_envio) q.fechaEnvio = patch.fecha_envio;
     q.state = state;
@@ -4376,7 +4377,8 @@ async function saveQuote(opts){
     if(!CUR.id){
       // Cotización nueva: pedir número de oferta atómico a Supabase
       CUR.state = opts.state || 'borrador';
-      if(CUR.state==='enviada' && !CUR.fechaEnvio) CUR.fechaEnvio = new Date().toISOString();
+      // Cotización nueva: si nace enviada, registra la fecha de envío.
+      if(CUR.state==='enviada') CUR.fechaEnvio = new Date().toISOString();
       if(!CUR.seq){
         CUR.seq = await SB.nextSeq(CUR.unidad);  // serie correlativa propia de la unidad
         CUR.ref = refStr(CUR.seq, CUR.version||1, CUR.unidad);
@@ -4393,7 +4395,12 @@ async function saveQuote(opts){
       await reloadDB();
     } else {
       if(opts.state) CUR.state = opts.state;
-      if(CUR.state==='enviada' && !CUR.fechaEnvio) CUR.fechaEnvio = new Date().toISOString();
+      // Fecha de envío = último envío. Se actualiza cuando ESTE guardado es un
+      // envío: al generar el PDF (opts.state==='enviada') o cuando el estado
+      // recién ahora pasa a 'enviada' (comparado con el guardado anterior).
+      // Una edición común de una cotización ya enviada NO la pisa.
+      const _prev = (DB.quotes.find(q=>q.id===CUR.id)||{}).state;
+      if(CUR.state==='enviada' && (opts.state==='enviada' || _prev!=='enviada')) CUR.fechaEnvio = new Date().toISOString();
       await SB.updateQuote(CUR.id, quoteToRow(CUR));
       await reloadDB();
     }
