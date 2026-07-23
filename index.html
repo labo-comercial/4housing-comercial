@@ -4035,15 +4035,27 @@ async function delQuote(id){
     ? `¿Eliminar la cotización ${q.ref}? Es la única versión, así que se borra por completo.`
     : `¿Eliminar la versión ${verLabel} de la oferta ${refBase(q)}? Las otras ${totalVers-1} versión(es) se conservan.`;
   if(oppsVinc.length){
-    aviso += `\n\nEstá vinculada a ${oppsVinc.length} oportunidad(es): se desvinculan (no se borran).`;
+    const refs = oppsVinc.map(o=>o.ref||'OP').join(', ');
+    aviso += esUnica
+      ? `\n\nSe ELIMINARÁ también la oportunidad de origen (${refs}).`
+      : `\n\nLa oportunidad de origen (${refs}) se re-vincula a la versión que queda.`;
   }
   if(!confirm(aviso)) return;
   if(!confirm('Esta acción no se puede deshacer. ¿Confirmás?')) return;
 
   try{
-    // Desvincular oportunidades que la referencian
-    for(const o of oppsVinc){
-      try{ await SB.updateOpp(o.id, {cotizacion_id:null}); }catch(_){}
+    if(oppsVinc.length){
+      if(esUnica){
+        // Se borra la OE completa → se borra también su OP de origen (pedido de
+        // Pablo). Se borra la OP ANTES que la cotización por si hay FK.
+        for(const o of oppsVinc){ try{ await SB.delOpp(o.id); }catch(_){} }
+      } else {
+        // Quedan otras versiones de la OE → la OP se re-vincula a la versión más
+        // reciente que sobrevive, para que no reaparezca como vigente.
+        const survivor = DB.quotes.filter(x=>x.seq===q.seq && x.id!==id)
+                                  .sort((a,b)=>(b.version||parseVer(b.ref)||1)-(a.version||parseVer(a.ref)||1))[0];
+        if(survivor) for(const o of oppsVinc){ try{ await SB.updateOpp(o.id, {cotizacion_id:survivor.id}); }catch(_){} }
+      }
     }
     await SB.delQuote(id);
     await reloadDB();
