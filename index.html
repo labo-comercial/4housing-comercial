@@ -1262,6 +1262,8 @@ function groupQuotes(list, sortVar){
       case 'state':    return (stLabel(m.state)||'').toLowerCase();
       case 'total':    return quoteTotal(m)||0;
       case 'fecha':    return Math.max(...g.versions.map(v=>v.created));
+      case 'proyecto': return (m.proyecto||'').toLowerCase();
+      case 'fechaEnvio': return m.fechaEnvio || '';
       default:         return Math.max(...g.versions.map(v=>v.created));
     }
   };
@@ -1321,13 +1323,12 @@ VIEWS.quotes = function(){
         <thead><tr>
           ${sortTh('Ref.','ref','quoteSort','VIEWS.quotes')}
           ${sortTh('Cliente','client','quoteSort','VIEWS.quotes')}
-          ${sortTh('Atención','attn','quoteSort','VIEWS.quotes')}
           ${sortTh('Comercial','comercial','quoteSort','VIEWS.quotes')}
           ${sortTh('Estado','state','quoteSort','VIEWS.quotes')}
           ${sortTh('Total','total','quoteSort','VIEWS.quotes','r')}
           ${sortTh('Fecha','fecha','quoteSort','VIEWS.quotes','r')}
-          <th>Proyecto</th>
-          <th class="nowrap">Fecha de envío</th>
+          ${sortTh('Proyecto','proyecto','quoteSort','VIEWS.quotes')}
+          ${sortTh('Fecha de envío','fechaEnvio','quoteSort','VIEWS.quotes','r')}
           <th></th>
         </tr></thead>
         <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
@@ -1360,7 +1361,6 @@ function rowOppRental(o){
   return `<tr class="opp-row clickable" data-id="${o.id}">
     <td class="nowrap"><strong>${esc(o.ref||'—')}</strong> <span class="help" style="font-size:10px">oportunidad</span></td>
     <td>${esc(upperName(oppClientName(o)))}</td>
-    <td>${esc(titleCase(o.title)||'—')}</td>
     <td>${esc(titleCase(o.comercial)||'—')}</td>
     <td class="nowrap"><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
     <td class="r nowrap">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
@@ -1418,7 +1418,6 @@ function rowQuote(x, o){
     return `<tr class="clickable ver-child ${o.hidden?'hide':''}" data-key="${o.groupKey}" onclick="editQuote('${x.id}')">
       <td class="nowrap"><span class="ver-tag">VER${String(ver).padStart(2,'0')}</span></td>
       <td>${esc(upperName(x.client)||'—')}</td>
-      <td>${esc(titleCase(x.attn)||'—')}</td>
       <td>${esc(titleCase(x.comercial)||'—')}</td>
       <td class="nowrap" onclick="event.stopPropagation()">
         <span class="badge st-${x.state}">${stLabel(x.state)}</span>
@@ -1442,7 +1441,6 @@ function rowQuote(x, o){
   return `<tr class="clickable ${o.multi?'ver-main ver-grp':''} ${o.open?'open':''}" ${o.multi?`data-key="${o.groupKey}"`:''} onclick="editQuote('${x.id}')">
     <td class="nowrap">${refCell}${o.multi?`<span class="ver-badge">VER${String(ver).padStart(2,'0')}</span>`:''}</td>
     <td>${esc(upperName(x.client)||'—')}</td>
-    <td>${esc(titleCase(x.attn)||'—')}</td>
     <td>${esc(titleCase(x.comercial)||'—')}</td>
     <td class="nowrap" onclick="event.stopPropagation()">
       <span class="badge st-${x.state}">${stLabel(x.state)}</span>
@@ -2622,13 +2620,12 @@ VIEWS.ventas = function(){
         <thead><tr>
           ${sortTh('Ref.','ref','ventasSort','VIEWS.ventas')}
           ${sortTh('Cliente','client','ventasSort','VIEWS.ventas')}
-          ${sortTh('Atención','attn','ventasSort','VIEWS.ventas')}
           ${sortTh('Comercial','comercial','ventasSort','VIEWS.ventas')}
           ${sortTh('Estado','state','ventasSort','VIEWS.ventas')}
           ${sortTh('Total','total','ventasSort','VIEWS.ventas','r')}
           ${sortTh('Fecha','fecha','ventasSort','VIEWS.ventas','r')}
-          <th>Proyecto</th>
-          <th class="nowrap">Fecha de envío</th>
+          ${sortTh('Proyecto','proyecto','ventasSort','VIEWS.ventas')}
+          ${sortTh('Fecha de envío','fechaEnvio','ventasSort','VIEWS.ventas','r')}
           <th></th>
         </tr></thead>
         <tbody>${opps.map(rowOppRental).join('')}${groups.map(rowGroup).join('')}</tbody></table>`
