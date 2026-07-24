@@ -4096,6 +4096,23 @@ function renderEditor(isNew){
      <button class="btn ghost" onclick="printQuote()">${ICO.print} Imprimir / PDF</button>
      <button class="btn" onclick="saveQuote()">Guardar</button>`);
   const opts = DB.clients.map(c=>`<option value="${c.id}" ${c.id===CUR.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
+  // Oportunidad de origen (si esta cotización nació de una OP): mostramos sus
+  // datos —prioridad, fecha límite, próximo paso, notas— editables acá. Se
+  // guardan en la OP (que sigue existiendo mientras exista la OE), sin duplicar.
+  const opOrigen = CUR.id ? DB.opps.find(o=>o.cotizacionId===CUR.id) : null;
+  const panelOrigen = opOrigen ? `
+      <div class="card"><div class="card-h"><h3>Oportunidad de origen · ${esc(opOrigen.ref||'OP')}</h3></div><div class="card-b">
+        <p class="help" style="margin-top:0">Datos que venían de la oportunidad. Se editan acá y se guardan en la oportunidad.</p>
+        <div class="frow c2">
+          <div class="field"><label>Prioridad</label><select id="eop_prio">${OPP_PRIOS.map(p=>`<option value="${p}" ${p===opOrigen.prioridad?'selected':''}>${OPP_PRIO_LBL[p]}</option>`).join('')}</select></div>
+          <div class="field"><label>Fecha límite</label><input id="eop_fecha" type="date" value="${esc(opOrigen.fechaLimite||'')}"></div>
+        </div>
+        <div class="frow c2">
+          <div class="field"><label>Próximo paso</label><input id="eop_prox" value="${esc(opOrigen.proximoPaso||'')}"></div>
+          <div class="field"><label>Fecha próximo paso</label><input id="eop_proxfecha" type="date" value="${esc(opOrigen.proximoPasoFecha||'')}"></div>
+        </div>
+        <div class="field"><label>Notas</label><textarea id="eop_notas">${esc(opOrigen.notas||'')}</textarea></div>
+      </div></div>` : '';
   C().innerHTML = `
    <div class="cotz-layout">
     <div class="cotz-form">
@@ -4121,6 +4138,8 @@ function renderEditor(isNew){
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;color:#54514a">
           <input type="checkbox" id="e_showtotal" ${CUR.showTotal?'checked':''} style="width:16px;height:16px;accent-color:var(--olive)"> Mostrar total (apagar = tarifario)</label>
       </div></div>
+
+      ${panelOrigen}
 
       <div class="card"><div class="card-h"><h3>Ítems</h3><button class="btn sm" onclick="addItem()">${ICO.plus} Ítem</button></div>
       <div class="card-b"><div id="itemList"></div></div></div>
@@ -4191,6 +4210,19 @@ function renderEditor(isNew){
       document.getElementById('e_phone').value=c.phone||''; }
     renderDoc();
   };
+  // Panel "Oportunidad de origen": cada cambio se guarda en la OP.
+  if(opOrigen){
+    const updOP = async(patch, apply)=>{
+      try{ await SB.updateOpp(opOrigen.id, patch); apply(); toast('Oportunidad actualizada'); }
+      catch(e){ toast('Error al guardar la oportunidad: '+e.message); }
+    };
+    const _p=id=>document.getElementById(id);
+    _p('eop_prio').onchange     = e=> updOP({prioridad:e.target.value},           ()=>opOrigen.prioridad=e.target.value);
+    _p('eop_fecha').onchange    = e=> updOP({fecha_limite:e.target.value||null},   ()=>opOrigen.fechaLimite=e.target.value);
+    _p('eop_prox').onchange     = e=> updOP({proximo_paso:e.target.value||null},   ()=>opOrigen.proximoPaso=e.target.value);
+    _p('eop_proxfecha').onchange= e=> updOP({proximo_paso_fecha:e.target.value||null}, ()=>opOrigen.proximoPasoFecha=e.target.value);
+    _p('eop_notas').onchange    = e=> updOP({notas:e.target.value||null},          ()=>opOrigen.notas=e.target.value);
+  }
   renderItems(); renderDoc(); fitPreview();
   window.addEventListener('resize', fitPreview);
 }
