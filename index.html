@@ -2300,7 +2300,8 @@ function oppFormBody(o){
   return `
     <div class="opp-detail-grid">
       <div class="fld"><label>Título</label><input id="oTitle" class="inp" value="${esc(o.title||'')}" placeholder="Asunto / referencia"></div>
-      <div class="fld"><label>Cliente / Organismo</label><select id="oClient" class="inp">${cliOpts}</select></div>
+      <div class="fld"><label>Cliente / Organismo</label><select id="oClient" class="inp">${cliOpts}</select>
+        <input id="oClientNew" class="inp" style="margin-top:6px" placeholder="…o escribí un cliente nuevo para darlo de alta"></div>
       <div class="fld"><label>Tipo</label><select id="oTipo" class="inp">${tipoOpts}</select></div>
       <div class="fld"><label>Unidad</label><select id="oUnidad" class="inp">${unidadOpts}</select></div>
       <div class="fld"><label>Prioridad</label><select id="oPrio" class="inp">${prioOpts}</select></div>
@@ -2331,6 +2332,19 @@ function textToFormaPago(txt){
   });
 }
 
+// Si en el editor de oportunidad se escribió un cliente nuevo (campo libre) y no
+// se eligió uno guardado, lo busca por nombre o lo da de alta en Clientes y
+// devuelve su id. Mismo criterio que el editor de cotización (saveQuote).
+async function resolverClienteOpp(f){
+  const el = document.getElementById('oClientNew');
+  const nuevo = (el ? el.value : '').trim();
+  if(f.clientId || !nuevo) return f.clientId; // ya eligió uno guardado, o no cargó nada
+  const existe = DB.clients.find(c=> c.name.trim().toLowerCase() === nuevo.toLowerCase());
+  if(existe) return existe.id;
+  const creado = await SB.addClient(clientToRow({ name: upperName(nuevo), attn:'', email:'', phone:'', notes:'' }));
+  await reloadDB();
+  return creado.id;
+}
 function readOppForm(){
   return {
     title: document.getElementById('oTitle').value.trim(),
@@ -2358,6 +2372,7 @@ function newOpp(){
 async function saveNewOpp(){
   try{
     const f = readOppForm();
+    f.clientId = await resolverClienteOpp(f);
     await SB.addOpp(oppToRow(f));
     await reloadDB(); closeModal(); toast('Oportunidad creada'); refreshCurrent();
   }catch(e){ toast('Error al crear: '+e.message); }
@@ -2372,6 +2387,7 @@ function editOpp(id){
 async function saveEditOpp(id){
   try{
     const f = readOppForm();
+    f.clientId = await resolverClienteOpp(f);
     await SB.updateOpp(id, oppToRow(f));
     await reloadDB(); closeModal(); toast('Oportunidad actualizada'); refreshCurrent();
   }catch(e){ toast('Error al guardar: '+e.message); }
@@ -2677,6 +2693,7 @@ function newOppVentas(){
 async function saveNewOppFrom(view){
   try{
     const f = readOppForm();
+    f.clientId = await resolverClienteOpp(f);
     await SB.addOpp(oppToRow(f));
     await reloadDB(); closeModal(); toast('Oportunidad creada');
     VIEWS[view] ? VIEWS[view]() : VIEWS.ventas();
