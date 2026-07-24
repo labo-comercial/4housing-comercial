@@ -467,6 +467,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="./msal-browser.min.js"></script>
 </head>
 <body>
 <div class="app">
@@ -769,6 +770,7 @@ function quoteToRow(q){
     mostrar_entrega: q.showEntrega!==false, mostrar_minimo: q.showMinimo!==false,
     nota1: q.nota1, nota2: q.nota2, ivanote: q.ivanote, estado: q.state,
     proyecto: q.proyecto || null, fecha_envio: q.fechaEnvio || null,
+    sharepoint_url: q.sharepointUrl || null,
     comercial: q.comercial || null,
     unidad_negocio: q.unidad || 'rental',
     desc_tipo: q.descTipo || 'pct', desc_valor: (q.descValor===''||q.descValor==null)?0:num(q.descValor),
@@ -809,7 +811,7 @@ function rowToQuote(r){
     comercial: r.comercial||'',
     unidad: r.unidad_negocio||'rental',
     descTipo: r.desc_tipo||'pct', descValor: (r.desc_valor!=null && r.desc_valor!==0) ? r.desc_valor : '',
-    proyecto: r.proyecto||'', fechaEnvio: r.fecha_envio||'',
+    proyecto: r.proyecto||'', fechaEnvio: r.fecha_envio||'', sharepointUrl: r.sharepoint_url||'',
     state: r.estado||'borrador', created: r.created_at ? Date.parse(r.created_at) : Date.now()
   };
 }
@@ -4093,6 +4095,7 @@ function renderEditor(isNew){
     `<button class="btn ghost" onclick="go('${volverView}')">← Volver</button>
      ${(!isNew && CUR.id)?`<button class="btn ghost" onclick="newVersion('${CUR.id}')">${ICO.copy||ICO.plus} Nueva versión</button>`:''}
      ${(!isNew && CUR.id)?`<button class="btn danger" onclick="delQuote('${CUR.id}')">Eliminar</button>`:''}
+     ${(CUR.unidad==='ventas' && CUR.id)?`<button class="btn ghost" onclick="abrirCarpetaSP()" title="${CUR.sharepointUrl?'Abrir la carpeta del proyecto en SharePoint':'Crear la carpeta del proyecto en SharePoint'}">📁 ${CUR.sharepointUrl?'Carpeta SharePoint':'Crear carpeta SharePoint'}</button>`:''}
      <button class="btn ghost" onclick="printQuote()">${ICO.print} Imprimir / PDF</button>
      <button class="btn" onclick="saveQuote()">Guardar</button>`);
   const opts = DB.clients.map(c=>`<option value="${c.id}" ${c.id===CUR.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
@@ -4472,6 +4475,9 @@ async function saveQuote(opts){
         }catch(_){ /* el vínculo es best-effort; la cotización ya se guardó */ }
       }
       await reloadDB();
+      // OE de ventas nueva (versión 1): crear el árbol de carpetas en SharePoint.
+      // Best-effort, no bloquea el guardado.
+      if(CUR.unidad==='ventas' && (CUR.version||1)===1){ crearCarpetaSharePointOE(CUR); }
     } else {
       if(opts.state) CUR.state = opts.state;
       // Fecha de envío = último envío. Se actualiza cuando ESTE guardado es un
@@ -4656,6 +4662,92 @@ window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion
       + '<div style="margin-top:10px"><button class="btn" onclick="location.reload()">Reintentar</button></div></div>';
   }
 })();
+
+/* ================= SHAREPOINT (ventas): árbol de carpetas por OE =================
+   Reutiliza el registro de Azure de LABO (client id f47da2c5…, ya con permisos
+   Files/Sites.ReadWrite.All + consentimiento de admin sobre GerenciaComercial2).
+   Al crear una OE de ventas se crea (o reutiliza) la carpeta del proyecto y su
+   árbol. Es best-effort: si Graph falla, la cotización se guarda igual. */
+const SP_CFG = {
+  clientId: 'f47da2c5-7922-4e2f-8648-51b8486552fb',
+  authority: 'https://login.microsoftonline.com/c408b6d8-ae0b-4d30-9056-da52e18116c4',
+  scopes: ['https://graph.microsoft.com/Files.ReadWrite.All','https://graph.microsoft.com/Sites.ReadWrite.All'],
+  redirectUri: 'https://labo-comercial.github.io/4housing-comercial/index.html',
+  // Carpeta madre de VENTAS en GerenciaComercial2 (link que pasó Pablo)
+  carpetaMadreLink: 'https://4housing22.sharepoint.com/:f:/s/GerenciaComercial2/IgC0ea4JV54iTYQcS2OOgkEfAQvBjwxvvd-xIC1dTEFBasE?e=ZoVha9'
+};
+let _spMsal=null,_spTok=null,_spDrive=null,_spItem=null;
+async function _spToken(interactivo){
+  let w=0; while(typeof msal==='undefined'&&w<5000){ await new Promise(r=>setTimeout(r,100)); w+=100; }
+  if(typeof msal==='undefined') throw new Error('No se pudo cargar el módulo de Microsoft.');
+  if(!_spMsal){ _spMsal=new msal.PublicClientApplication({auth:{clientId:SP_CFG.clientId,authority:SP_CFG.authority},cache:{cacheLocation:'sessionStorage',storeAuthStateInCookie:true}}); await _spMsal.initialize(); try{await _spMsal.handleRedirectPromise();}catch(_){} }
+  const acc=_spMsal.getAllAccounts();
+  if(acc.length){ try{ const r=await _spMsal.acquireTokenSilent({scopes:SP_CFG.scopes,account:acc[0]}); _spTok=r.accessToken; return _spTok; }catch(_){} }
+  if(!interactivo) return null;
+  const r2=await _spMsal.loginPopup({scopes:SP_CFG.scopes,redirectUri:SP_CFG.redirectUri});
+  _spTok=r2.accessToken; return _spTok;
+}
+async function _spFetch(url,opts){
+  const t=await _spToken(true);
+  return fetch('https://graph.microsoft.com/v1.0'+url,{...opts,headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json',...(opts&&opts.headers)}});
+}
+function _spEncodeShare(u){ const b=btoa(unescape(encodeURIComponent(u))); return 'u!'+b.replace(/=+$/,'').replace(/\//g,'_').replace(/\+/g,'-'); }
+function _spSan(s){ return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[\\/:*?"<>|#%]/g,'-').replace(/\s+/g,' ').trim(); }
+async function _spCarpetaMadre(){
+  if(_spDrive&&_spItem) return;
+  const r=await _spFetch('/shares/'+_spEncodeShare(SP_CFG.carpetaMadreLink)+'/driveItem?$select=id,parentReference,name');
+  const j=await r.json(); if(!r.ok) throw new Error('No se pudo acceder a la carpeta de SharePoint ('+r.status+').');
+  _spItem=j.id; _spDrive=j.parentReference&&j.parentReference.driveId;
+  if(!_spDrive) throw new Error('No se pudo resolver el drive de SharePoint.');
+}
+async function _spSubcarpeta(parentId,name){ // crea si no existe; devuelve el item
+  const lr=await _spFetch('/drives/'+_spDrive+'/items/'+parentId+'/children?$select=id,name,webUrl&$top=400');
+  const lj=await lr.json(); if(!lr.ok) throw new Error('No se pudo listar SharePoint ('+lr.status+').');
+  const found=(lj.value||[]).find(x=>x.name===name);
+  if(found) return found;
+  const cr=await _spFetch('/drives/'+_spDrive+'/items/'+parentId+'/children',{method:'POST',body:JSON.stringify({name,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});
+  const cj=await cr.json(); if(!cr.ok) throw new Error('No se pudo crear "'+name+'" ('+cr.status+').');
+  return cj;
+}
+// Crea (o reutiliza) el árbol de carpetas para una OE de ventas. Dedup por número
+// de referencia (seq). Devuelve la webUrl de la carpeta del proyecto.
+async function crearArbolSharePoint(q){
+  await _spCarpetaMadre();
+  const lr=await _spFetch('/drives/'+_spDrive+'/items/'+_spItem+'/children?$select=id,name,webUrl&$top=999');
+  const lj=await lr.json(); if(!lr.ok) throw new Error('No se pudo listar la carpeta madre ('+lr.status+').');
+  const pref=String(q.seq)+' - ';
+  let proj=(lj.value||[]).find(x=> (x.name||'').indexOf(pref)===0);
+  if(!proj){
+    const nombre=_spSan(q.seq+' - '+(q.client||'SIN CLIENTE')+(q.proyecto?(' - '+q.proyecto):''));
+    const cr=await _spFetch('/drives/'+_spDrive+'/items/'+_spItem+'/children',{method:'POST',body:JSON.stringify({name:nombre,folder:{},'@microsoft.graph.conflictBehavior':'fail'})});
+    proj=await cr.json(); if(!cr.ok) throw new Error('No se pudo crear la carpeta del proyecto ('+cr.status+').');
+  }
+  const N1=['01 COMUNICACIONES & REQUISITOS','02 PLANOS COMERCIALES','03 PEDIDO DE PRECIOS','04 COSTEO - PRESUPUESTO','05 OFERTAS','06 OTI','07 ALTA DE CLIENTES'];
+  const sub={};
+  for(const n of N1){ sub[n]=await _spSubcarpeta(proj.id,n); }
+  for(const n of ['01 CLIENTE','02 INTERNAS','03 CONTRATACION DE COMPRA']) await _spSubcarpeta(sub['01 COMUNICACIONES & REQUISITOS'].id,n);
+  for(const n of ['01 OFERTA TECNICA','02 OFERTA ECONOMICA']) await _spSubcarpeta(sub['05 OFERTAS'].id,n);
+  return proj.webUrl;
+}
+// Dispara la creación del árbol para una OE de ventas y guarda el link. Best-effort.
+async function crearCarpetaSharePointOE(q){
+  if(!q || q.unidad!=='ventas' || !q.seq) return;
+  try{
+    toast('Creando carpeta en SharePoint…');
+    const url=await crearArbolSharePoint(q);
+    if(q.id && url){ try{ await SB.updateQuote(q.id,{sharepoint_url:url}); }catch(_){} q.sharepointUrl=url; }
+    toast('Carpeta de SharePoint lista');
+  }catch(e){ toast('SharePoint: '+e.message); }
+}
+window.crearCarpetaSharePointOE = crearCarpetaSharePointOE;
+// Botón del editor: abre la carpeta del proyecto (o la crea si aún no existe).
+async function abrirCarpetaSP(){
+  if(typeof CUR==='undefined' || !CUR) return;
+  if(CUR.sharepointUrl){ window.open(CUR.sharepointUrl,'_blank'); return; }
+  await crearCarpetaSharePointOE(CUR);
+  if(CUR.sharepointUrl) window.open(CUR.sharepointUrl,'_blank');
+}
+window.abrirCarpetaSP = abrirCarpetaSP;
 
 /* ================= COLUMNAS REDIMENSIONABLES (todas las listas) ================= */
 // Agrega un agarre en el borde de cada encabezado de table.grid para ensanchar/
