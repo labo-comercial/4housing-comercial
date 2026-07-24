@@ -86,6 +86,8 @@ table.grid th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;}
 table.grid th{position:relative;}
 .col-resizer{position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;user-select:none;z-index:2;touch-action:none;}
 .col-resizer:hover,.col-resizer.dragging{background:rgba(95,122,78,.4);}
+/* Envoltorio con scroll horizontal para cuando se ensanchan columnas */
+.grid-scroll{overflow-x:auto;max-width:100%;}
 table.grid th.th-sort:hover{color:var(--olive-deep);background:#f3f1e7;}
 table.grid th.th-active{color:var(--olive-deep);}
 table.grid th .th-arrow{font-size:9px;margin-left:2px;}
@@ -4638,8 +4640,26 @@ function habilitarResizeColumnas(root){
     const ths=[...t.tHead.rows[0].cells];
     const sig=_firmaTabla(t);
     let saved={}; try{ saved=JSON.parse(localStorage.getItem(sig)||'{}'); }catch(_){}
+    // Pasar a layout FIJO para que los anchos manden. Se congelan los anchos
+    // actuales (o los guardados) ANTES de fijar, así el aspecto no cambia.
+    // Se envuelve la tabla en un contenedor con scroll-x para poder ensanchar
+    // más allá del ancho visible.
+    // Congelar anchos (guardados o los actuales) y dar a la TABLA un ancho
+    // explícito = suma de columnas. Con layout fijo + ancho explícito, el ancho
+    // de cada columna manda y la tabla puede crecer más allá del contenedor
+    // (que tiene scroll-x). Con width:auto el navegador la seguía comprimiendo.
+    let suma=0;
+    ths.forEach((th,i)=>{ const w=saved[i]||th.offsetWidth||100; th.style.width=w+'px'; suma+=w; });
+    t.style.tableLayout='fixed';
+    t.style.width=suma+'px';
+    if(t.dataset.resizable!=='1'){
+      if(t.parentElement && !t.parentElement.classList.contains('grid-scroll')){
+        const w=document.createElement('div'); w.className='grid-scroll';
+        t.parentNode.insertBefore(w,t); w.appendChild(t);
+      }
+      t.dataset.resizable='1';
+    }
     ths.forEach((th,i)=>{
-      if(saved[i]) th.style.width=saved[i]+'px';
       if(i===ths.length-1) return;              // no en la última (acciones)
       if(th.querySelector('.col-resizer')) return; // ya tiene agarre
       const h=document.createElement('span'); h.className='col-resizer';
@@ -4647,9 +4667,13 @@ function habilitarResizeColumnas(root){
       h.addEventListener('click', ev=>ev.stopPropagation()); // no disparar el orden
       h.addEventListener('mousedown', ev=>{
         ev.preventDefault(); ev.stopPropagation();
-        const startX=ev.clientX, startW=th.offsetWidth;
+        const startX=ev.clientX, startW=th.offsetWidth, startTablaW=t.offsetWidth;
         h.classList.add('dragging');
-        const mm=e2=>{ th.style.width=Math.max(50, startW+(e2.clientX-startX))+'px'; };
+        const mm=e2=>{
+          const nw=Math.max(50, startW+(e2.clientX-startX));
+          th.style.width=nw+'px';
+          t.style.width=(startTablaW+(nw-startW))+'px'; // la tabla crece/achica con la columna
+        };
         const mu=()=>{
           document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu);
           h.classList.remove('dragging');
