@@ -82,6 +82,10 @@ table.grid td.wrap{white-space:normal;}
 table.grid tbody tr:last-child td{border-bottom:none;}
 table.grid tbody tr.clickable:hover{background:#fbfaf3;cursor:pointer;}
 table.grid th.th-sort{cursor:pointer;user-select:none;white-space:nowrap;}
+/* Columnas redimensionables: agarre en el borde derecho de cada encabezado */
+table.grid th{position:relative;}
+.col-resizer{position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;user-select:none;z-index:2;touch-action:none;}
+.col-resizer:hover,.col-resizer.dragging{background:rgba(95,122,78,.4);}
 table.grid th.th-sort:hover{color:var(--olive-deep);background:#f3f1e7;}
 table.grid th.th-active{color:var(--olive-deep);}
 table.grid th .th-arrow{font-size:9px;margin-left:2px;}
@@ -4617,6 +4621,53 @@ window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion
       + '<div style="margin-top:6px">'+esc(e.message)+'</div>'
       + '<div style="margin-top:10px"><button class="btn" onclick="location.reload()">Reintentar</button></div></div>';
   }
+})();
+
+/* ================= COLUMNAS REDIMENSIONABLES (todas las listas) ================= */
+// Agrega un agarre en el borde de cada encabezado de table.grid para ensanchar/
+// achicar la columna. Los anchos se guardan por tabla en localStorage (la firma
+// se arma con los títulos de las columnas, ignorando las flechas de orden) y se
+// re-aplican tras cada render (un MutationObserver sobre #content).
+function _firmaTabla(t){
+  const ths=[...t.tHead.rows[0].cells];
+  return 'colw:'+ths.map(c=>c.textContent.replace(/[▲▼]/g,'').trim()).join('|').slice(0,180);
+}
+function habilitarResizeColumnas(root){
+  (root||document).querySelectorAll('table.grid').forEach(t=>{
+    if(!t.tHead || !t.tHead.rows.length) return;
+    const ths=[...t.tHead.rows[0].cells];
+    const sig=_firmaTabla(t);
+    let saved={}; try{ saved=JSON.parse(localStorage.getItem(sig)||'{}'); }catch(_){}
+    ths.forEach((th,i)=>{
+      if(saved[i]) th.style.width=saved[i]+'px';
+      if(i===ths.length-1) return;              // no en la última (acciones)
+      if(th.querySelector('.col-resizer')) return; // ya tiene agarre
+      const h=document.createElement('span'); h.className='col-resizer';
+      th.appendChild(h);
+      h.addEventListener('click', ev=>ev.stopPropagation()); // no disparar el orden
+      h.addEventListener('mousedown', ev=>{
+        ev.preventDefault(); ev.stopPropagation();
+        const startX=ev.clientX, startW=th.offsetWidth;
+        h.classList.add('dragging');
+        const mm=e2=>{ th.style.width=Math.max(50, startW+(e2.clientX-startX))+'px'; };
+        const mu=()=>{
+          document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu);
+          h.classList.remove('dragging');
+          try{ const s=JSON.parse(localStorage.getItem(sig)||'{}'); s[i]=th.offsetWidth; localStorage.setItem(sig, JSON.stringify(s)); }catch(_){}
+        };
+        document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu);
+      });
+    });
+  });
+}
+(function initResizeColumnas(){
+  const cont=document.getElementById('content');
+  if(!cont){ document.addEventListener('DOMContentLoaded', initResizeColumnas); return; }
+  let t=null; let obs=null;
+  const run=()=>{ if(obs) obs.disconnect(); habilitarResizeColumnas(cont); if(obs) obs.observe(cont,{childList:true,subtree:true}); };
+  obs=new MutationObserver(()=>{ clearTimeout(t); t=setTimeout(run,40); });
+  obs.observe(cont,{childList:true,subtree:true});
+  run();
 })();
 </script>
 <script src="/portal/nav.js" defer></script>
