@@ -249,6 +249,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 .modal-b{padding:22px;}
 .modal-f{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
 .sp-row:hover{background:#f6f5ef;}
+.sp-drop.sp-drop-over{border-color:#5f7a4e !important;background:#eef3e6;color:#37432c !important;}
 
 .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
 .toolbar .search{flex:1;min-width:200px;position:relative;}
@@ -4825,11 +4826,14 @@ async function _spRenderBrowse(){
       : '<a href="#" onclick="_spGoTo('+i+');return false" style="color:#5f7a4e;text-decoration:none">'+esc(s.name)+'</a>'
     ).join(' <span style="color:#c7c4ba">›</span> ');
   let h='<div style="font-size:12.5px;margin-bottom:10px;line-height:1.6">'+bc+'</div>';
-  h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
+  h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
     +'<input type="file" id="spFile" multiple style="font-size:12.5px;max-width:230px">'
     +'<button class="btn sm" onclick="_spDoUpload()">Subir aquí</button>'
     +'<a class="btn ghost sm" href="'+esc(cur.webUrl||_spBrowse.stack[0].webUrl||'#')+'" target="_blank">Abrir en SharePoint</a>'
     +'<span id="spUpMsg" style="font-size:12px;color:#888780"></span></div>';
+  h+='<div id="spDrop" class="sp-drop" ondragover="_spDragOver(event)" ondragleave="_spDragLeave(event)" ondrop="_spDrop(event)"'
+    +' style="border:1.5px dashed var(--line);border-radius:10px;padding:12px;text-align:center;color:#888780;font-size:12.5px;margin-bottom:12px">'
+    +'Arrastrá y soltá archivos acá para subirlos a <b>'+esc(cur.name)+'</b></div>';
   if(!carpetas.length && !archivos.length){ h+='<div style="color:#999;font-size:13px;padding:6px 2px">Carpeta vacía.</div>'; }
   else{
     h+='<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;max-height:320px;overflow-y:auto">';
@@ -4841,19 +4845,27 @@ async function _spRenderBrowse(){
 }
 function _spEnter(i){ const f=_spBrowse.carpetas[i]; if(!f) return; _spBrowse.stack.push({id:f.id,name:f.name,webUrl:f.webUrl}); _spRenderBrowse(); }
 function _spGoTo(i){ _spBrowse.stack=_spBrowse.stack.slice(0,i+1); _spRenderBrowse(); }
-async function _spDoUpload(){
-  const inp=document.getElementById('spFile'), msg=document.getElementById('spUpMsg');
-  if(!inp || !inp.files.length){ if(msg) msg.textContent='Elegí uno o más archivos.'; return; }
-  const cur=_spBrowse.stack[_spBrowse.stack.length-1], files=[...inp.files];
+// Sube una lista de archivos a la carpeta actual, mostrando progreso. Reusado por
+// el botón "Subir aquí" y por drag & drop.
+async function _spUploadFiles(files){
+  const msg=document.getElementById('spUpMsg');
+  files=[...(files||[])];
+  if(!files.length){ if(msg) msg.textContent='Elegí o soltá uno o más archivos.'; return; }
+  const cur=_spBrowse.stack[_spBrowse.stack.length-1];
   for(let i=0;i<files.length;i++){
-    if(msg) msg.textContent='Subiendo '+(i+1)+'/'+files.length+': '+files[i].name+'…';
+    if(msg){ msg.style.color='#888780'; msg.textContent='Subiendo '+(i+1)+'/'+files.length+': '+files[i].name+'…'; }
     try{ await _spUpload(cur.id, files[i]); }
     catch(e){ if(msg){ msg.style.color='#b4554e'; msg.textContent=e.message; } return; }
   }
   if(msg){ msg.style.color='#3B6D11'; msg.textContent='✓ '+files.length+' archivo(s) subido(s).'; }
   await _spRenderBrowse();
 }
+function _spDoUpload(){ const inp=document.getElementById('spFile'); return _spUploadFiles(inp?inp.files:[]); }
+function _spDragOver(e){ e.preventDefault(); e.stopPropagation(); const z=document.getElementById('spDrop'); if(z) z.classList.add('sp-drop-over'); }
+function _spDragLeave(e){ e.preventDefault(); e.stopPropagation(); const z=document.getElementById('spDrop'); if(z) z.classList.remove('sp-drop-over'); }
+function _spDrop(e){ e.preventDefault(); e.stopPropagation(); const z=document.getElementById('spDrop'); if(z) z.classList.remove('sp-drop-over'); const dt=e.dataTransfer; if(dt&&dt.files&&dt.files.length) _spUploadFiles(dt.files); }
 window._spEnter=_spEnter; window._spGoTo=_spGoTo; window._spDoUpload=_spDoUpload;
+window._spDragOver=_spDragOver; window._spDragLeave=_spDragLeave; window._spDrop=_spDrop;
 
 /* ================= COLUMNAS REDIMENSIONABLES (todas las listas) ================= */
 // Agrega un agarre en el borde de cada encabezado de table.grid para ensanchar/
