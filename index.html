@@ -248,6 +248,7 @@ textarea.inp{resize:vertical;min-height:60px;}
 .modal-h .x{background:none;border:none;font-size:22px;color:var(--muted);line-height:1;padding:2px 6px;}
 .modal-b{padding:22px;}
 .modal-f{padding:16px 22px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
+.sp-row:hover{background:#f6f5ef;}
 
 .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:20px;flex-wrap:wrap;}
 .toolbar .search{flex:1;min-width:200px;position:relative;}
@@ -4096,6 +4097,7 @@ function renderEditor(isNew){
      ${(!isNew && CUR.id)?`<button class="btn ghost" onclick="newVersion('${CUR.id}')">${ICO.copy||ICO.plus} Nueva versión</button>`:''}
      ${(!isNew && CUR.id)?`<button class="btn danger" onclick="delQuote('${CUR.id}')">Eliminar</button>`:''}
      ${(CUR.unidad==='ventas' && CUR.id)?`<button class="btn ghost" onclick="abrirCarpetaSP()" title="${CUR.sharepointUrl?'Abrir la carpeta del proyecto en SharePoint':'Crear la carpeta del proyecto en SharePoint'}">📁 ${CUR.sharepointUrl?'Carpeta SharePoint':'Crear carpeta SharePoint'}</button>`:''}
+     ${(CUR.unidad==='ventas' && CUR.id)?`<button class="btn ghost" onclick="abrirArchivosSP()" title="Ver y subir archivos del proyecto en SharePoint">🗂️ Archivos</button>`:''}
      <button class="btn ghost" onclick="printQuote()">${ICO.print} Imprimir / PDF</button>
      <button class="btn" onclick="saveQuote()">Guardar</button>`);
   const opts = DB.clients.map(c=>`<option value="${c.id}" ${c.id===CUR.clientId?'selected':''}>${esc(c.name)}</option>`).join('');
@@ -4710,7 +4712,7 @@ async function _spSubcarpeta(parentId,name){ // crea si no existe; devuelve el i
   return cj;
 }
 // Crea (o reutiliza) el árbol de carpetas para una OE de ventas. Dedup por número
-// de referencia (seq). Devuelve la webUrl de la carpeta del proyecto.
+// de referencia (seq). Devuelve el item de la carpeta del proyecto ({id,name,webUrl}).
 async function crearArbolSharePoint(q){
   await _spCarpetaMadre();
   const lr=await _spFetch('/drives/'+_spDrive+'/items/'+_spItem+'/children?$select=id,name,webUrl&$top=999');
@@ -4727,19 +4729,30 @@ async function crearArbolSharePoint(q){
   for(const n of N1){ sub[n]=await _spSubcarpeta(proj.id,n); }
   for(const n of ['01 CLIENTE','02 INTERNAS','03 CONTRATACION DE COMPRA']) await _spSubcarpeta(sub['01 COMUNICACIONES & REQUISITOS'].id,n);
   for(const n of ['01 OFERTA TECNICA','02 OFERTA ECONOMICA']) await _spSubcarpeta(sub['05 OFERTAS'].id,n);
-  return proj.webUrl;
+  return proj;
 }
 // Dispara la creación del árbol para una OE de ventas y guarda el link. Best-effort.
 async function crearCarpetaSharePointOE(q){
   if(!q || q.unidad!=='ventas' || !q.seq) return;
   try{
     toast('Creando carpeta en SharePoint…');
-    const url=await crearArbolSharePoint(q);
+    const proj=await crearArbolSharePoint(q);
+    const url=proj && proj.webUrl;
     if(q.id && url){ try{ await SB.updateQuote(q.id,{sharepoint_url:url}); }catch(_){} q.sharepointUrl=url; }
     toast('Carpeta de SharePoint lista');
   }catch(e){ toast('SharePoint: '+e.message); }
 }
 window.crearCarpetaSharePointOE = crearCarpetaSharePointOE;
+// Resuelve el item de la carpeta del proyecto. Si ya existe, no re-crea el árbol
+// (solo la busca por prefijo); si no existe, crea el árbol completo. Devuelve {id,name,webUrl}.
+async function _spProyectoItem(q){
+  await _spCarpetaMadre();
+  const lr=await _spFetch('/drives/'+_spDrive+'/items/'+_spItem+'/children?$select=id,name,webUrl&$top=999');
+  const lj=await lr.json(); if(!lr.ok) throw new Error('No se pudo listar la carpeta madre ('+lr.status+').');
+  const pref=String(q.seq)+' - ';
+  const proj=(lj.value||[]).find(x=> (x.name||'').indexOf(pref)===0);
+  return proj || await crearArbolSharePoint(q);
+}
 // Botón del editor: abre la carpeta del proyecto (o la crea si aún no existe).
 async function abrirCarpetaSP(){
   if(typeof CUR==='undefined' || !CUR) return;
@@ -4748,6 +4761,99 @@ async function abrirCarpetaSP(){
   if(CUR.sharepointUrl) window.open(CUR.sharepointUrl,'_blank');
 }
 window.abrirCarpetaSP = abrirCarpetaSP;
+
+/* ---- Explorador de archivos de SharePoint (subir / ver desde la app) ---- */
+function _spSize(n){ n=Number(n)||0; if(n<1024) return n+' B'; if(n<1048576) return (n/1024).toFixed(0)+' KB'; return (n/1048576).toFixed(1)+' MB'; }
+function _spMsgBrowse(t){ return '<div style="color:#888780;font-size:13px;padding:14px 2px">'+esc(t||'Cargando…')+'</div>'; }
+// Lista carpetas y archivos de un item del drive.
+async function _spChildren(itemId){
+  const r=await _spFetch('/drives/'+_spDrive+'/items/'+itemId+'/children?$select=id,name,webUrl,folder,file,size&$top=999');
+  const j=await r.json(); if(!r.ok) throw new Error('No se pudo listar la carpeta ('+r.status+').');
+  return j.value||[];
+}
+// Sube un archivo a parentId. PUT directo si es chico; sesión en chunks si es grande.
+async function _spUpload(parentId, file){
+  const nombre=(_spSan(file.name).replace(/^-+|-+$/g,'') || 'archivo');
+  const t=await _spToken(true);
+  const dest='/drives/'+_spDrive+'/items/'+parentId+':/'+encodeURIComponent(nombre)+':';
+  if(file.size <= 4*1024*1024){
+    const r=await fetch('https://graph.microsoft.com/v1.0'+dest+'/content',
+      {method:'PUT',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/octet-stream'},body:file});
+    if(!r.ok) throw new Error('No se pudo subir "'+file.name+'" ('+r.status+').');
+    return await r.json();
+  }
+  // Archivo grande: sesión de carga resumible. Los chunks deben ser múltiplos de 320 KiB (salvo el último).
+  const sr=await fetch('https://graph.microsoft.com/v1.0'+dest+'/createUploadSession',
+    {method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},body:JSON.stringify({item:{'@microsoft.graph.conflictBehavior':'replace'}})});
+  const sj=await sr.json(); if(!sr.ok) throw new Error('No se pudo iniciar la carga de "'+file.name+'" ('+sr.status+').');
+  const url=sj.uploadUrl, CH=5*1024*1024; let start=0;
+  while(start<file.size){
+    const end=Math.min(start+CH,file.size);
+    const cr=await fetch(url,{method:'PUT',headers:{'Content-Range':'bytes '+start+'-'+(end-1)+'/'+file.size},body:file.slice(start,end)});
+    if(cr.status===200||cr.status===201) return await cr.json();  // último chunk: devuelve el item
+    if(cr.status!==202) throw new Error('Falló la carga de "'+file.name+'" ('+cr.status+').');
+    start=end;
+  }
+}
+// Abre el modal-explorador para la OE actual (crea el árbol si aún no existe).
+let _spBrowse=null;
+async function abrirArchivosSP(){
+  if(typeof CUR==='undefined' || !CUR || CUR.unidad!=='ventas' || !CUR.id) return;
+  openModal('Archivos del proyecto','<div id="spBrowseBody">'+_spMsgBrowse('Conectando con SharePoint…')+'</div>',
+    '<button class="btn ghost" onclick="closeModal()">Cerrar</button>');
+  try{
+    const proj=await _spProyectoItem(CUR);
+    if(CUR.id && proj.webUrl && !CUR.sharepointUrl){ try{ await SB.updateQuote(CUR.id,{sharepoint_url:proj.webUrl}); }catch(_){} CUR.sharepointUrl=proj.webUrl; }
+    _spBrowse={ stack:[{id:proj.id,name:proj.name,webUrl:proj.webUrl}] };
+    await _spRenderBrowse();
+  }catch(e){
+    const b=document.getElementById('spBrowseBody'); if(b) b.innerHTML='<div style="color:#b4554e;font-size:13px;padding:8px 2px">'+esc(e.message)+'</div>';
+  }
+}
+window.abrirArchivosSP = abrirArchivosSP;
+async function _spRenderBrowse(){
+  const b=document.getElementById('spBrowseBody'); if(!b || !_spBrowse) return;
+  const cur=_spBrowse.stack[_spBrowse.stack.length-1];
+  b.innerHTML=_spMsgBrowse('Cargando…');
+  let items; try{ items=await _spChildren(cur.id); }
+  catch(e){ b.innerHTML='<div style="color:#b4554e;font-size:13px;padding:8px 2px">'+esc(e.message)+'</div>'; return; }
+  const carpetas=items.filter(x=>x.folder).sort((a,b)=>String(a.name).localeCompare(b.name,'es',{numeric:true}));
+  const archivos=items.filter(x=>!x.folder).sort((a,b)=>String(a.name).localeCompare(b.name,'es',{numeric:true}));
+  _spBrowse.carpetas=carpetas;
+  const bc=_spBrowse.stack.map((s,i)=> i===_spBrowse.stack.length-1
+      ? '<span style="font-weight:600;color:#37342e">'+esc(s.name)+'</span>'
+      : '<a href="#" onclick="_spGoTo('+i+');return false" style="color:#5f7a4e;text-decoration:none">'+esc(s.name)+'</a>'
+    ).join(' <span style="color:#c7c4ba">›</span> ');
+  let h='<div style="font-size:12.5px;margin-bottom:10px;line-height:1.6">'+bc+'</div>';
+  h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap">'
+    +'<input type="file" id="spFile" multiple style="font-size:12.5px;max-width:230px">'
+    +'<button class="btn sm" onclick="_spDoUpload()">Subir aquí</button>'
+    +'<a class="btn ghost sm" href="'+esc(cur.webUrl||_spBrowse.stack[0].webUrl||'#')+'" target="_blank">Abrir en SharePoint</a>'
+    +'<span id="spUpMsg" style="font-size:12px;color:#888780"></span></div>';
+  if(!carpetas.length && !archivos.length){ h+='<div style="color:#999;font-size:13px;padding:6px 2px">Carpeta vacía.</div>'; }
+  else{
+    h+='<div style="border:1px solid var(--line);border-radius:10px;overflow:hidden;max-height:320px;overflow-y:auto">';
+    carpetas.forEach((f,i)=>{ h+='<div class="sp-row" onclick="_spEnter('+i+')" style="padding:9px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13px">📁 '+esc(f.name)+'</div>'; });
+    archivos.forEach(f=>{ h+='<div class="sp-row" style="padding:9px 12px;border-bottom:1px solid var(--line);display:flex;gap:8px;align-items:center;justify-content:space-between;font-size:13px"><a href="'+esc(f.webUrl)+'" target="_blank" style="color:#37342e;text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">📄 '+esc(f.name)+'</a><span style="font-size:11px;color:#999;white-space:nowrap">'+_spSize(f.size)+'</span></div>'; });
+    h+='</div>';
+  }
+  b.innerHTML=h;
+}
+function _spEnter(i){ const f=_spBrowse.carpetas[i]; if(!f) return; _spBrowse.stack.push({id:f.id,name:f.name,webUrl:f.webUrl}); _spRenderBrowse(); }
+function _spGoTo(i){ _spBrowse.stack=_spBrowse.stack.slice(0,i+1); _spRenderBrowse(); }
+async function _spDoUpload(){
+  const inp=document.getElementById('spFile'), msg=document.getElementById('spUpMsg');
+  if(!inp || !inp.files.length){ if(msg) msg.textContent='Elegí uno o más archivos.'; return; }
+  const cur=_spBrowse.stack[_spBrowse.stack.length-1], files=[...inp.files];
+  for(let i=0;i<files.length;i++){
+    if(msg) msg.textContent='Subiendo '+(i+1)+'/'+files.length+': '+files[i].name+'…';
+    try{ await _spUpload(cur.id, files[i]); }
+    catch(e){ if(msg){ msg.style.color='#b4554e'; msg.textContent=e.message; } return; }
+  }
+  if(msg){ msg.style.color='#3B6D11'; msg.textContent='✓ '+files.length+' archivo(s) subido(s).'; }
+  await _spRenderBrowse();
+}
+window._spEnter=_spEnter; window._spGoTo=_spGoTo; window._spDoUpload=_spDoUpload;
 
 /* ================= COLUMNAS REDIMENSIONABLES (todas las listas) ================= */
 // Agrega un agarre en el borde de cada encabezado de table.grid para ensanchar/
