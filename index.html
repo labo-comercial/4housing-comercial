@@ -4527,7 +4527,8 @@ function quoteFileName(){
   const base = refBase(CUR);              // OE-R-0001 / OE-V-4400
   const cli = sanitizeFile(CUR.client) || 'Cliente';
   const tip = sanitizeFile(quoteTipologia());
-  return `${base}-${cli}-${tip}`;
+  const ver = 'VER'+String(CUR.version||parseVer(CUR.ref)||1).padStart(2,'0');
+  return `${base}-${cli}-${tip}-${ver}`;
 }
 async function printQuote(){
   // Al generar el PDF, la cotización queda registrada en el CRM como ENVIADA
