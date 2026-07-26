@@ -4754,12 +4754,22 @@ async function _spProyectoItem(q){
   const proj=(lj.value||[]).find(x=> (x.name||'').indexOf(pref)===0);
   return proj || await crearArbolSharePoint(q);
 }
+// Abre una URL en el navegador externo. Con la app corriendo como PWA (ventana
+// propia), window.open('_blank') navega en la misma ventana y deja al usuario sin
+// forma de volver; un click sobre un <a target="_blank"> real sí abre afuera.
+function abrirExterno(url){
+  if(!url) return;
+  const a=document.createElement('a');
+  a.href=url; a.target='_blank'; a.rel='noopener noreferrer';
+  document.body.appendChild(a); a.click(); a.remove();
+}
+window.abrirExterno = abrirExterno;
 // Botón del editor: abre la carpeta del proyecto (o la crea si aún no existe).
 async function abrirCarpetaSP(){
   if(typeof CUR==='undefined' || !CUR) return;
-  if(CUR.sharepointUrl){ window.open(CUR.sharepointUrl,'_blank'); return; }
+  if(CUR.sharepointUrl){ abrirExterno(CUR.sharepointUrl); return; }
   await crearCarpetaSharePointOE(CUR);
-  if(CUR.sharepointUrl) window.open(CUR.sharepointUrl,'_blank');
+  if(CUR.sharepointUrl) abrirExterno(CUR.sharepointUrl);
 }
 window.abrirCarpetaSP = abrirCarpetaSP;
 
