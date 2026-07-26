@@ -4825,7 +4825,10 @@ async function _spRenderBrowse(){
       ? '<span style="font-weight:600;color:#37342e">'+esc(s.name)+'</span>'
       : '<a href="#" onclick="_spGoTo('+i+');return false" style="color:#5f7a4e;text-decoration:none">'+esc(s.name)+'</a>'
     ).join(' <span style="color:#c7c4ba">›</span> ');
-  let h='<div style="font-size:12.5px;margin-bottom:10px;line-height:1.6">'+bc+'</div>';
+  const puedeVolver=_spBrowse.stack.length>1;
+  let h='<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">';
+  h+='<button class="btn ghost sm" onclick="_spBack()" '+(puedeVolver?'':'disabled style="opacity:.45;cursor:default"')+'>⬅ Volver</button>';
+  h+='<span style="font-size:12.5px;line-height:1.6">'+bc+'</span></div>';
   h+='<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
     +'<input type="file" id="spFile" multiple style="font-size:12.5px;max-width:230px">'
     +'<button class="btn sm" onclick="_spDoUpload()">Subir aquí</button>'
@@ -4845,6 +4848,7 @@ async function _spRenderBrowse(){
 }
 function _spEnter(i){ const f=_spBrowse.carpetas[i]; if(!f) return; _spBrowse.stack.push({id:f.id,name:f.name,webUrl:f.webUrl}); _spRenderBrowse(); }
 function _spGoTo(i){ _spBrowse.stack=_spBrowse.stack.slice(0,i+1); _spRenderBrowse(); }
+function _spBack(){ if(_spBrowse.stack.length>1){ _spBrowse.stack.pop(); _spRenderBrowse(); } }
 // Sube una lista de archivos a la carpeta actual, mostrando progreso. Reusado por
 // el botón "Subir aquí" y por drag & drop.
 async function _spUploadFiles(files){
@@ -4864,7 +4868,7 @@ function _spDoUpload(){ const inp=document.getElementById('spFile'); return _spU
 function _spDragOver(e){ e.preventDefault(); e.stopPropagation(); const z=document.getElementById('spDrop'); if(z) z.classList.add('sp-drop-over'); }
 function _spDragLeave(e){ e.preventDefault(); e.stopPropagation(); const z=document.getElementById('spDrop'); if(z) z.classList.remove('sp-drop-over'); }
 function _spDrop(e){ e.preventDefault(); e.stopPropagation(); const z=document.getElementById('spDrop'); if(z) z.classList.remove('sp-drop-over'); const dt=e.dataTransfer; if(dt&&dt.files&&dt.files.length) _spUploadFiles(dt.files); }
-window._spEnter=_spEnter; window._spGoTo=_spGoTo; window._spDoUpload=_spDoUpload;
+window._spEnter=_spEnter; window._spGoTo=_spGoTo; window._spBack=_spBack; window._spDoUpload=_spDoUpload;
 window._spDragOver=_spDragOver; window._spDragLeave=_spDragLeave; window._spDrop=_spDrop;
 
 /* ================= COLUMNAS REDIMENSIONABLES (todas las listas) ================= */
