@@ -406,6 +406,11 @@ textarea.inp{resize:vertical;min-height:60px;}
   /* el pie ya no se ancla al fondo vía flex (eso rompía la paginación): separación fija */
   .page .foot{margin-top:10px;}
   .toast,.modal-bg{display:none !important;}
+  /* Nada que inyecte un script externo a nivel de <body> se imprime (p.ej. el
+     acceso rápido de /portal/nav.js). Se listan las excepciones que sí van al
+     papel. Ocultar el nodo de nivel superior también tapa su shadow DOM, que es
+     donde suelen vivir estos widgets y adonde no llega ningún otro selector. */
+  body > *:not(.app):not(#catPrintLayer):not(#edcPrintLayer){display:none !important;}
 
   /* Impresión del catálogo: oculta toda la app y muestra solo la capa */
   body.printing-catalog .app{display:none !important;}
@@ -4950,22 +4955,37 @@ function habilitarResizeColumnas(root){
   obs.observe(cont,{childList:true,subtree:true});
   run();
 })();
-// El acceso rápido de /portal/nav.js (botón flotante) queda fuera de la app y no
-// lo puede ocultar el CSS de impresión existente. Al imprimir/generar un PDF,
-// se oculta cualquier elemento con position:fixed ajeno al documento que se
-// está imprimiendo (docMount, catPrintLayer, edcPrintLayer), y se restaura después.
+// Refuerzo del @media print de arriba: por si un widget flotante se inyecta
+// dentro de la app (y no a nivel de <body>), al imprimir se ocultan los
+// position:fixed ajenos al documento, atravesando shadow roots -que es donde
+// suele esconderse el acceso rápido de /portal/nav.js y por eso no lo agarraba
+// un querySelectorAll común-. Se restaura el estado exacto al terminar.
 (function hideFloatingWidgetsOnPrint(){
-  const printLayers = ['docMount','catPrintLayer','edcPrintLayer'];
-  let hidden = [];
+  const idsImprimibles = ['docMount','catPrintLayer','edcPrintLayer'];
+  let ocultos = [];
+  // Nunca tocar algo que contenga (o esté contenido en) lo que se imprime:
+  // .prev-wrap, por ejemplo, es sticky y es el contenedor de #docMount.
+  const tocaImprimible = el => idsImprimibles.some(id=>{
+    const capa = document.getElementById(id);
+    return capa && (el===capa || el.contains(capa) || capa.contains(el));
+  });
+  const juntarFijos = (raiz, out) => {
+    raiz.querySelectorAll('*').forEach(el=>{
+      if(el.shadowRoot) juntarFijos(el.shadowRoot, out);
+      if(tocaImprimible(el)) return;
+      if(getComputedStyle(el).position==='fixed') out.push(el);
+    });
+  };
   window.addEventListener('beforeprint', ()=>{
-    hidden = Array.from(document.querySelectorAll('body *')).filter(el=>
-      !printLayers.some(id=>el.closest('#'+id)) && getComputedStyle(el).position==='fixed'
-    );
-    hidden.forEach(el=> el.style.setProperty('display','none','important'));
+    const fijos=[]; juntarFijos(document.body, fijos);
+    ocultos = fijos.map(el=>({el, prev:el.style.getPropertyValue('display'), prio:el.style.getPropertyPriority('display')}));
+    ocultos.forEach(({el})=> el.style.setProperty('display','none','important'));
   });
   window.addEventListener('afterprint', ()=>{
-    hidden.forEach(el=> el.style.removeProperty('display'));
-    hidden = [];
+    ocultos.forEach(({el,prev,prio})=>{
+      if(prev) el.style.setProperty('display', prev, prio); else el.style.removeProperty('display');
+    });
+    ocultos = [];
   });
 })();
 </script>
