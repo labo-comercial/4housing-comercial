@@ -4950,6 +4950,24 @@ function habilitarResizeColumnas(root){
   obs.observe(cont,{childList:true,subtree:true});
   run();
 })();
+// El acceso rápido de /portal/nav.js (botón flotante) queda fuera de la app y no
+// lo puede ocultar el CSS de impresión existente. Al imprimir/generar un PDF,
+// se oculta cualquier elemento con position:fixed ajeno al documento que se
+// está imprimiendo (docMount, catPrintLayer, edcPrintLayer), y se restaura después.
+(function hideFloatingWidgetsOnPrint(){
+  const printLayers = ['docMount','catPrintLayer','edcPrintLayer'];
+  let hidden = [];
+  window.addEventListener('beforeprint', ()=>{
+    hidden = Array.from(document.querySelectorAll('body *')).filter(el=>
+      !printLayers.some(id=>el.closest('#'+id)) && getComputedStyle(el).position==='fixed'
+    );
+    hidden.forEach(el=> el.style.setProperty('display','none','important'));
+  });
+  window.addEventListener('afterprint', ()=>{
+    hidden.forEach(el=> el.style.removeProperty('display'));
+    hidden = [];
+  });
+})();
 </script>
 <script src="/portal/nav.js" defer></script>
 </body>
