@@ -530,6 +530,10 @@ textarea.inp{resize:vertical;min-height:60px;}
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
         Historial
       </button>
+      <button class="navbtn" data-view="cierres">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>
+        Cierres mensuales
+      </button>
     </nav>
     <div class="sp"></div>
     <div class="data-actions">
@@ -719,6 +723,11 @@ const SB = {
   addQuote:    (q) => sbFetch('/cotizaciones', {method:'POST', body: JSON.stringify(q)}).then(r=>r[0]),
   updateQuote: (id,q) => sbFetch('/cotizaciones?id=eq.'+id, {method:'PATCH', body: JSON.stringify(q)}).then(r=>r[0]),
   delQuote:    (id) => sbFetch('/cotizaciones?id=eq.'+id, {method:'DELETE', prefer:'return=minimal'}),
+  // ---- Cierres mensuales de indicadores ----
+  listCierres: () => sbFetch('/cierres_mensuales?select=*&order=periodo.desc'),
+  addCierre:   (c) => sbFetch('/cierres_mensuales', {method:'POST', body: JSON.stringify(c), prefer:'return=minimal'}),
+  // upsert (para recalcular): pisa la fila si ya existe ese (periodo, unidad)
+  upsertCierre:(c) => sbFetch('/cierres_mensuales', {method:'POST', body: JSON.stringify(c), prefer:'resolution=merge-duplicates,return=minimal'}),
   // ---- Contador (número de oferta) ----
   // Incrementa atómicamente vía función RPC y devuelve el nuevo número
   nextSeq:     (unidad) => sbFetch('/rpc/next_seq_un', {method:'POST', body: JSON.stringify({p_unidad: (unidad==='ventas'?'ventas':'rental')})}),
@@ -819,7 +828,8 @@ function rowToQuote(r){
     unidad: r.unidad_negocio||'rental',
     descTipo: r.desc_tipo||'pct', descValor: (r.desc_valor!=null && r.desc_valor!==0) ? r.desc_valor : '',
     proyecto: r.proyecto||'', fechaEnvio: r.fecha_envio||'', sharepointUrl: r.sharepoint_url||'',
-    state: r.estado||'borrador', created: r.created_at ? Date.parse(r.created_at) : Date.now()
+    state: r.estado||'borrador', created: r.created_at ? Date.parse(r.created_at) : Date.now(),
+    fechaEstado: r.fecha_estado ? Date.parse(r.fecha_estado) : null
   };
 }
 function clientToRow(c){
@@ -961,7 +971,7 @@ function gestionToRow(g){
     tipo:g.tipo||'nota', detalle:g.detalle||null, usuario:g.usuario||null
   };
 }
-let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], cobranzas:[], pagos:[], adicionales:[], gestiones:[], seq:1 };
+let DB = { clients:[], quotes:[], catalog:[], opps:[], acts:[], empProsp:[], prospectos:[], cobranzas:[], pagos:[], adicionales:[], gestiones:[], cierres:[], seq:1 };
 let PROSP_LOADED = false;
 let SB_READY = false;
 
@@ -969,10 +979,10 @@ function uid(){ return Math.random().toString(36).slice(2,10); }
 
 // Recarga todo el estado desde Supabase hacia DB
 async function reloadDB(){
-  const [clients, catalog, quotes, seq, opps, acts, cobranzas, pagos, adicionales, gestiones] = await Promise.all([
+  const [clients, catalog, quotes, seq, opps, acts, cobranzas, pagos, adicionales, gestiones, cierres] = await Promise.all([
     SB.listClients(), SB.listCatalog(), SB.listQuotes(), SB.peekSeq(), SB.listOpps(), SB.listActs(),
     SB.listCobranzas().catch(()=>[]), SB.listPagos().catch(()=>[]), SB.listAdicionales().catch(()=>[]),
-    SB.listGestiones().catch(()=>[])
+    SB.listGestiones().catch(()=>[]), SB.listCierres().catch(()=>[])
   ]);
   DB.clients = clients.map(rowToClient);
   DB.catalog = catalog.map(rowToCat);
@@ -984,6 +994,7 @@ async function reloadDB(){
   DB.pagos     = pagos.map(rowToPago);
   DB.adicionales = adicionales.map(rowToAdicional);
   DB.gestiones = gestiones.map(rowToGestion);
+  DB.cierres = Array.isArray(cierres) ? cierres : [];
   SB_READY = true;
 }
 
@@ -4648,6 +4659,176 @@ window.toggleVentasFiltro=toggleVentasFiltro;
 window.editProspecto=editProspecto; window.saveEditProspecto=saveEditProspecto; window.backToEmpresas=backToEmpresas;
 window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion; window.convertirProspecto=convertirProspecto;
 
+/* ================= CIERRES MENSUALES DE INDICADORES =================
+   Congela mes a mes los indicadores del panel para tener registro histórico.
+   - Flujo (del mes): exacto para cualquier mes. "Ganadas/perdidas del mes" se
+     cuentan por fecha_estado (cuándo se ganó/perdió), no por fecha de creación.
+   - Stock (a fin de mes): foto al cierre. Solo se guarda para el mes que se
+     cierra en tiempo (el mes anterior); en meses viejos queda null.
+   El cierre es automático al abrir la app (mes anterior); "recalcular" y
+   "generar faltantes" son acciones manuales. */
+
+// meses 'YYYY-MM' entre a y b inclusive
+function mesesEntre(a, b){
+  const out=[]; let [ay,am]=a.split('-').map(Number); const [by,bm]=b.split('-').map(Number);
+  while(ay<by || (ay===by && am<=bm)){ out.push(ay+'-'+String(am).padStart(2,'0')); am++; if(am>12){am=1;ay++;} }
+  return out;
+}
+function nombreMes(periodo){ const [y,m]=periodo.split('-'); return (MESES[(+m)-1]||m)+' '+y; }
+
+// Indicadores de RENTAL para un período (mirror del panel de Rental).
+function computeCierreRental(P, incluirStock){
+  const q = DB.quotes.filter(x=> x.unidad!=='ventas');
+  const decididoEnMes = x=> monthKey(x.fechaEstado||x.created)===P;
+  const cotizaciones_mes  = q.filter(x=> monthKey(x.created)===P).length;
+  const ganadas_mes  = q.filter(x=> x.state==='ganada'  && decididoEnMes(x)).length;
+  const perdidas_mes = q.filter(x=> x.state==='perdida' && decididoEnMes(x)).length;
+  const cerradas = ganadas_mes + perdidas_mes;
+  const conversion_mes = cerradas ? Math.round(100*ganadas_mes/cerradas) : 0;
+  const oportunidades_mes = DB.opps.filter(o=> (o.unidad==='rental'||o.unidad==='ambas') && o.created && monthKey(o.created)===P).length;
+  const ind = { cotizaciones_mes, ganadas_mes, perdidas_mes, conversion_mes, oportunidades_mes };
+  if(incluirStock){
+    ind.cotizaciones_vigentes = q.filter(x=> !['ganada','perdida'].includes(x.state)).length;
+    ind.cotizaciones_totales  = q.length;
+  }
+  return ind;
+}
+// Indicadores de VENTAS para un período (mirror de ventasKPIs).
+function computeCierreVentas(P, incluirStock){
+  const q = quotesVentasUlt();
+  const decididoEnMes = x=> monthKey(x.fechaEstado||x.created)===P;
+  const cotizaciones_mes = q.filter(x=> monthKey(x.created)===P && ['enviada','negociacion','ganada','perdida'].includes(x.state)).length;
+  const ganadas_mes  = q.filter(x=> x.state==='ganada'  && decididoEnMes(x)).length;
+  const perdidas_mes = q.filter(x=> x.state==='perdida' && decididoEnMes(x)).length;
+  const cerradas = ganadas_mes + perdidas_mes;
+  const conversion_mes = cerradas ? Math.round(100*ganadas_mes/cerradas) : 0;
+  const oportunidades_mes = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && o.created && monthKey(o.created)===P).length;
+  let mu=0, ma=0;
+  q.filter(x=> monthKey(x.created)===P).forEach(x=>{ const t=quoteTotal(x); if(x.currency==='ARS') ma+=t; else mu+=t; });
+  const ind = { cotizaciones_mes, ganadas_mes, perdidas_mes, conversion_mes, oportunidades_mes,
+                monto_cotizado_usd:Math.round(mu), monto_cotizado_ars:Math.round(ma) };
+  if(incluirStock){
+    const oppVig = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
+    ind.oportunidades_en_proceso = oppVig.filter(o=> o.state==='nuevo'||o.state==='borrador').length;
+    ind.oe_a_esperar = q.filter(x=> x.state==='enviada').length;
+    let pu=0, pa=0;
+    q.forEach(x=>{ if(!['borrador','enviada','negociacion'].includes(x.state)) return; const t=quoteTotal(x); if(x.currency==='ARS') pa+=t; else pu+=t; });
+    ind.pipeline_usd = Math.round(pu); ind.pipeline_ars = Math.round(pa);
+  }
+  return ind;
+}
+function computeCierre(P, unidad, incluirStock){
+  return unidad==='rental' ? computeCierreRental(P, incluirStock) : computeCierreVentas(P, incluirStock);
+}
+function _emailActual(){ try{ return (typeof AUTH_USER!=='undefined' && AUTH_USER && AUTH_USER.email) || null; }catch(_){ return null; } }
+
+// Cierre automático: congela el MES ANTERIOR si todavía no está cerrado. Idempotente.
+async function cerrarMesesPendientes(){
+  if(!SB_READY) return;
+  const cerrados = new Set((DB.cierres||[]).map(c=> c.periodo+'|'+c.unidad));
+  const prev = prevMonthKey();
+  const pend = [];
+  for(const unidad of ['rental','ventas']){
+    if(cerrados.has(prev+'|'+unidad)) continue;
+    pend.push({ periodo:prev, unidad, indicadores:computeCierre(prev, unidad, true), tipo:'auto', cerrado_por:_emailActual() });
+  }
+  if(!pend.length) return;
+  for(const c of pend){ try{ await SB.addCierre(c); }catch(_){ /* si otro ya lo cerró (PK), se ignora */ } }
+  try{ DB.cierres = await SB.listCierres(); }catch(_){}
+}
+// Genera todos los cierres faltantes desde el primer dato hasta el mes anterior
+// (flujo exacto; el stock solo del mes anterior). Acción manual.
+async function backfillCierres(){
+  if(!confirm('Generar los cierres de todos los meses anteriores que falten.\n\nLos indicadores de flujo son exactos; el pipeline/stock solo queda para el mes pasado (los meses viejos no tienen foto de stock).\n\n¿Continuar?')) return;
+  const ts = DB.quotes.map(x=>x.created).concat(DB.opps.map(o=>o.created)).filter(Boolean);
+  if(!ts.length){ toast('No hay datos para cerrar.'); return; }
+  const prev = prevMonthKey();
+  const meses = mesesEntre(monthKey(Math.min(...ts)), prev);
+  const cerrados = new Set((DB.cierres||[]).map(c=> c.periodo+'|'+c.unidad));
+  let n=0;
+  for(const P of meses){
+    const incluirStock = (P===prev);
+    for(const unidad of ['rental','ventas']){
+      if(cerrados.has(P+'|'+unidad)) continue;
+      try{ await SB.addCierre({ periodo:P, unidad, indicadores:computeCierre(P, unidad, incluirStock), tipo:'auto', cerrado_por:_emailActual() }); n++; }catch(_){}
+    }
+  }
+  try{ DB.cierres = await SB.listCierres(); }catch(_){}
+  toast(n? (n+' cierre(s) generado(s).') : 'No faltaba ninguno.'); go('cierres');
+}
+// Recalcula (pisa) un cierre puntual. El stock solo se recalcula si sigue siendo
+// el mes anterior; en meses viejos se preserva null (no se puede reconstruir).
+async function recalcularCierre(periodo, unidad){
+  if(!confirm('Recalcular el cierre de '+nombreMes(periodo)+' ('+unidad+') con los datos actuales.\n\nEsto pisa el valor congelado. ¿Continuar?')) return;
+  const incluirStock = (periodo===prevMonthKey());
+  try{
+    await SB.upsertCierre({ periodo, unidad, indicadores:computeCierre(periodo, unidad, incluirStock), tipo:'manual', cerrado_por:_emailActual() });
+    DB.cierres = await SB.listCierres();
+    toast('Cierre recalculado.'); go('cierres');
+  }catch(e){ toast('Error: '+e.message); }
+}
+window.backfillCierres = backfillCierres; window.recalcularCierre = recalcularCierre;
+
+const CIERRE_COLS = {
+  rental: [
+    {k:'cotizaciones_mes', l:'Cotiz. del mes'}, {k:'ganadas_mes', l:'Ganadas'}, {k:'perdidas_mes', l:'Perdidas'},
+    {k:'conversion_mes', l:'Conv.', pct:true}, {k:'oportunidades_mes', l:'Oportun.'},
+    {k:'cotizaciones_vigentes', l:'Vigentes', stock:true}, {k:'cotizaciones_totales', l:'Totales', stock:true}
+  ],
+  ventas: [
+    {k:'cotizaciones_mes', l:'Cotiz. del mes'}, {k:'ganadas_mes', l:'Ganadas'}, {k:'perdidas_mes', l:'Perdidas'},
+    {k:'conversion_mes', l:'Conv.', pct:true}, {k:'oportunidades_mes', l:'Oportun.'},
+    {k:'monto_cotizado_usd', l:'Cotizado USD', money:true}, {k:'monto_cotizado_ars', l:'Cotizado ARS', money:true},
+    {k:'oportunidades_en_proceso', l:'En proceso', stock:true}, {k:'oe_a_esperar', l:'OE esperando', stock:true},
+    {k:'pipeline_usd', l:'Pipeline USD', stock:true, money:true}, {k:'pipeline_ars', l:'Pipeline ARS', stock:true, money:true}
+  ]
+};
+function _celdaCierre(ind, col){
+  const v = ind ? ind[col.k] : undefined;
+  if(v==null) return '<span style="color:#c4c0b4">—</span>';
+  if(col.pct)   return v+'%';
+  if(col.money) return fmt(v);
+  return v;
+}
+function tablaCierres(unidad){
+  const cols = CIERRE_COLS[unidad];
+  const filas = (DB.cierres||[]).filter(c=> c.unidad===unidad)
+    .sort((a,b)=> a.periodo<b.periodo?1:-1); // más nuevo primero
+  if(!filas.length) return '<div class="help" style="padding:10px 2px">Sin cierres todavía para '+unidad+'.</div>';
+  const th = '<th>Mes</th>'+cols.map(c=>`<th class="r">${c.l}${c.stock?'<span title="Foto al cierre (stock)" style="color:#b9985a"> *</span>':''}</th>`).join('')+'<th></th>';
+  const rows = filas.map(c=>{
+    const ind = c.indicadores||{};
+    const tds = cols.map(col=>`<td class="r nowrap">${_celdaCierre(ind,col)}</td>`).join('');
+    const badge = c.tipo==='manual' ? '<span class="help" title="Recalculado manualmente"> (manual)</span>' : '';
+    return `<tr><td class="nowrap"><b>${nombreMes(c.periodo)}</b>${badge}</td>${tds}
+      <td class="r nowrap"><button class="btn ghost" style="padding:3px 8px;font-size:11px" onclick="recalcularCierre('${c.periodo}','${unidad}')">Recalcular</button></td></tr>`;
+  }).join('');
+  return `<div style="overflow-x:auto"><table class="grid"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+VIEWS.cierres = function(){
+  setHeader('Cierres mensuales','Registro histórico de indicadores comerciales');
+  const html = `
+    <div class="card"><div class="card-b">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap">
+        <div class="help" style="max-width:640px;line-height:1.5">
+          Foto congelada de los indicadores mes a mes. Los de <b>flujo</b> (del mes) son exactos;
+          los marcados con <b style="color:#b9985a">*</b> son de <b>stock</b> (pipeline, vigentes): foto tomada al cerrar.
+          El mes anterior se cierra solo al abrir la app.
+        </div>
+        <button class="btn ghost" onclick="backfillCierres()">Generar cierres faltantes</button>
+      </div>
+    </div></div>
+    <div class="card"><div class="card-b">
+      <div style="font-size:15px;font-weight:700;color:#37432c;margin-bottom:10px">Rental</div>
+      ${tablaCierres('rental')}
+    </div></div>
+    <div class="card"><div class="card-b">
+      <div style="font-size:15px;font-weight:700;color:#37432c;margin-bottom:10px">Ventas</div>
+      ${tablaCierres('ventas')}
+    </div></div>`;
+  C().innerHTML = html;
+};
+
 // Arranque: 1) login Microsoft, 2) cargar Supabase, 3) mostrar panel
 (async function start(){
   const ok = await initAuth();
@@ -4664,6 +4845,7 @@ window.addProspGestion=addProspGestion; window.saveProspGestion=saveProspGestion
   if(c) c.innerHTML = '<div class="empty">Cargando datos desde la nube…</div>';
   try{
     await reloadDB();
+    try{ await cerrarMesesPendientes(); }catch(_){ /* el cierre es best-effort, no debe romper el arranque */ }
     go('dashboard');
   }catch(e){
     if(c) c.innerHTML = '<div class="empty"><div style="font-weight:600;color:#b4554e">No se pudo conectar con la base de datos</div>'
