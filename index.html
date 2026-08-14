@@ -1024,16 +1024,23 @@ function todayISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.get
 // Normaliza CUALQUIER formato de fecha guardado (YYYY-MM-DD, timestamp ISO con
 // hora, DD/MM/YYYY, etc.) a un único formato "D de MES de YYYY", para que la
 // columna Fecha se vea homogénea aunque los datos vengan de orígenes distintos.
-function isoToText(v){
-  if(!v) return '';
-  let s=String(v).trim(); if(!s) return '';
+// Parsea CUALQUIER formato de fecha guardado (YYYY-MM-DD, timestamp ISO con hora,
+// DD/MM/YYYY) y devuelve {y,m,d} o null si no se puede. Extrae por regex, sin
+// new Date para las formas con guiones/barras, para no correrse de día por zona.
+function _parseFecha(v){
+  if(!v) return null;
+  let s=String(v).trim(); if(!s) return null;
   let y,m,d,mt;
-  if(mt=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)){ y=+mt[1]; m=+mt[2]; d=+mt[3]; }                    // YYYY-MM-DD (con o sin hora)
-  else if(mt=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s)){ d=+mt[1]; m=+mt[2]; y=+mt[3]; if(y<100) y+=2000; } // DD/MM/YYYY (local)
-  else { const dt=new Date(s); if(!isNaN(dt.getTime())){ y=dt.getFullYear(); m=dt.getMonth()+1; d=dt.getDate(); } } // último recurso
-  if(!y||!m||!d||m<1||m>12||d<1||d>31) return s;   // no interpretable: mostrar crudo
-  return `${d} de ${MESES[m-1]} de ${y}`;
+  if(mt=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)){ y=+mt[1]; m=+mt[2]; d=+mt[3]; }
+  else if(mt=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s)){ d=+mt[1]; m=+mt[2]; y=+mt[3]; if(y<100) y+=2000; }
+  else { const dt=new Date(s); if(!isNaN(dt.getTime())){ y=dt.getFullYear(); m=dt.getMonth()+1; d=dt.getDate(); } }
+  if(!y||!m||!d||m<1||m>12||d<1||d>31) return null;
+  return {y,m,d};
 }
+// Formato largo "D de mes de AAAA" (documento/PDF, etiquetas).
+function isoToText(v){ const p=_parseFecha(v); return p ? `${p.d} de ${MESES[p.m-1]} de ${p.y}` : (v?String(v):''); }
+// Formato corto DD/MM/AAAA para las columnas de las listas.
+function fechaDMY(v){ const p=_parseFecha(v); return p ? `${String(p.d).padStart(2,'0')}/${String(p.m).padStart(2,'0')}/${p.y}` : (v?String(v):''); }
 // ---- Encabezado de columna ordenable ----
 // Devuelve un <th> clickeable que alterna asc/desc sobre el objeto de orden
 // (clientSort, quoteSort, etc.) y re-renderiza la vista indicada.
@@ -1248,7 +1255,7 @@ function rowQuoteDash(x, o){
       <td>${esc(titleCase(x.comercial)||'—')}</td>
       <td class="nowrap"><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
       <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-      <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+      <td class="r nowrap" style="color:#94917f">${esc(fechaDMY(x.dateISO)||x.date||'')}</td>
     </tr>`;
   }
   const refCell = o.multi
@@ -1263,7 +1270,7 @@ function rowQuoteDash(x, o){
     <td>${esc(titleCase(x.comercial)||'—')}</td>
     <td class="nowrap"><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
     <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-    <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    <td class="r nowrap" style="color:#94917f">${esc(fechaDMY(x.dateISO)||x.date||'')}</td>
   </tr>`;
 }
 function emptyState(t,s){
@@ -1450,7 +1457,7 @@ function oppOrigenRef(quoteId){
 // Celdas "Proyecto" y "Fecha de envío" para las filas de cotización.
 function celdasProyFecha(x){
   return `<td>${x.proyecto?esc(x.proyecto):'<span style="color:#94917f">—</span>'}</td>`
-       + `<td class="r nowrap" style="color:#94917f">${x.fechaEnvio? new Date(x.fechaEnvio).toLocaleDateString('es-AR') : '—'}</td>`;
+       + `<td class="r nowrap" style="color:#94917f">${x.fechaEnvio? esc(fechaDMY(x.fechaEnvio)) : '—'}</td>`;
 }
 function rowQuote(x, o){
   o = o || {};
@@ -1468,7 +1475,7 @@ function rowQuote(x, o){
         <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
       </td>
       <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-      <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+      <td class="r nowrap" style="color:#94917f">${esc(fechaDMY(x.dateISO)||x.date||'')}</td>
       ${celdasProyFecha(x)}
       <td></td>
     </tr>`;
@@ -1491,7 +1498,7 @@ function rowQuote(x, o){
       <select class="state-sel" data-id="${x.id}" title="Cambiar estado">${opts}</select>
     </td>
     <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-    <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||x.date||'')}</td>
+    <td class="r nowrap" style="color:#94917f">${esc(fechaDMY(x.dateISO)||x.date||'')}</td>
     ${celdasProyFecha(x)}
     <td class="nowrap" onclick="event.stopPropagation()" style="text-align:right">
       <button class="btn sm ghost" title="Crear nueva versión (misma referencia)" onclick="newVersion('${x.id}')">${ICO.copy} Versión</button>
@@ -2789,7 +2796,7 @@ function rowQuoteMini(x){
     <td>${esc(titleCase(x.comercial)||'—')}</td>
     <td class="nowrap"><span class="badge st-${x.state}">${stLabel(x.state)}</span></td>
     <td class="r nowrap"><b>${curSym(x.currency)} ${fmt(quoteTotal(x))}</b></td>
-    <td class="r nowrap" style="color:#94917f">${esc(isoToText(x.dateISO)||'')}</td>
+    <td class="r nowrap" style="color:#94917f">${esc(fechaDMY(x.dateISO)||'')}</td>
   </tr>`;
 }
 
