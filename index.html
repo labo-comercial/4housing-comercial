@@ -4695,24 +4695,38 @@ function computeCierreRental(P, incluirStock){
 }
 // Indicadores de VENTAS para un período (mirror de ventasKPIs).
 function computeCierreVentas(P, incluirStock){
-  const q = quotesVentasUlt();
-  const decididoEnMes = x=> monthKey(x.fechaEstado||x.created)===P;
-  const cotizaciones_mes = q.filter(x=> monthKey(x.created)===P && ['enviada','negociacion','ganada','perdida'].includes(x.state)).length;
-  const ganadas_mes  = q.filter(x=> x.state==='ganada'  && decididoEnMes(x)).length;
-  const perdidas_mes = q.filter(x=> x.state==='perdida' && decididoEnMes(x)).length;
+  const ult = quotesVentasUlt();   // última versión por OE — para stock/pipeline y ganadas/perdidas
+  // Agrupar TODAS las versiones por OE para atribuir el mes por su ORIGEN (primera
+  // versión), no por la última. Si no, una OE cotizada en julio y revisada en
+  // agosto se contaba en agosto y desaparecía de julio (bug del monto subestimado).
+  const grupos = {};
+  DB.quotes.filter(x=> x.unidad==='ventas'||x.unidad==='ambas').forEach(x=>{
+    const k = x.seq!=null ? ('s'+x.seq) : ('id'+x.id);
+    const o = grupos[k] || (grupos[k] = { origen:x.created, ult:x });
+    if(x.created < o.origen) o.origen = x.created;
+    const uv = x.version||parseVer(x.ref)||1, cv = o.ult.version||parseVer(o.ult.ref)||1;
+    if(uv > cv) o.ult = x;
+  });
+  const oes = Object.values(grupos);
+  const origenEnMes = o=> monthKey(o.origen)===P;                 // OE cotizada (originada) en el mes
+  const decididoEnMes = x=> monthKey(x.fechaEstado||x.created)===P; // ganada/perdida por fecha real
+  const cotizaciones_mes = oes.filter(o=> origenEnMes(o) && ['enviada','negociacion','ganada','perdida'].includes(o.ult.state)).length;
+  const ganadas_mes  = ult.filter(x=> x.state==='ganada'  && decididoEnMes(x)).length;
+  const perdidas_mes = ult.filter(x=> x.state==='perdida' && decididoEnMes(x)).length;
   const cerradas = ganadas_mes + perdidas_mes;
   const conversion_mes = cerradas ? Math.round(100*ganadas_mes/cerradas) : 0;
   const oportunidades_mes = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && o.created && monthKey(o.created)===P).length;
+  // Monto cotizado del mes: OE originadas en el mes, al valor de su última versión.
   let mu=0, ma=0;
-  q.filter(x=> monthKey(x.created)===P).forEach(x=>{ const t=quoteTotal(x); if(x.currency==='ARS') ma+=t; else mu+=t; });
+  oes.forEach(o=>{ if(!origenEnMes(o)) return; const t=quoteTotal(o.ult); if(o.ult.currency==='ARS') ma+=t; else mu+=t; });
   const ind = { cotizaciones_mes, ganadas_mes, perdidas_mes, conversion_mes, oportunidades_mes,
                 monto_cotizado_usd:Math.round(mu), monto_cotizado_ars:Math.round(ma) };
   if(incluirStock){
     const oppVig = DB.opps.filter(o=> (o.unidad==='ventas'||o.unidad==='ambas') && !o.cotizacionId && o.state!=='desestimada');
     ind.oportunidades_en_proceso = oppVig.filter(o=> o.state==='nuevo'||o.state==='borrador').length;
-    ind.oe_a_esperar = q.filter(x=> x.state==='enviada').length;
+    ind.oe_a_esperar = ult.filter(x=> x.state==='enviada').length;
     let pu=0, pa=0;
-    q.forEach(x=>{ if(!['borrador','enviada','negociacion'].includes(x.state)) return; const t=quoteTotal(x); if(x.currency==='ARS') pa+=t; else pu+=t; });
+    ult.forEach(x=>{ if(!['borrador','enviada','negociacion'].includes(x.state)) return; const t=quoteTotal(x); if(x.currency==='ARS') pa+=t; else pu+=t; });
     ind.pipeline_usd = Math.round(pu); ind.pipeline_ars = Math.round(pa);
   }
   return ind;
