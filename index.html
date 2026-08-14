@@ -1033,6 +1033,9 @@ function _parseFecha(v){
   let y,m,d,mt;
   if(mt=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)){ y=+mt[1]; m=+mt[2]; d=+mt[3]; }
   else if(mt=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s)){ d=+mt[1]; m=+mt[2]; y=+mt[3]; if(y<100) y+=2000; }
+  else if(mt=/^(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{4})/i.exec(s)){ // "18 de agosto de 2026" (texto que quedó guardado así)
+    const mi=MESES.findIndex(mn=>mn.toLowerCase()===mt[2].toLowerCase()); if(mi>=0){ d=+mt[1]; m=mi+1; y=+mt[3]; }
+  }
   else { const dt=new Date(s); if(!isNaN(dt.getTime())){ y=dt.getFullYear(); m=dt.getMonth()+1; d=dt.getDate(); } }
   if(!y||!m||!d||m<1||m>12||d<1||d>31) return null;
   return {y,m,d};
