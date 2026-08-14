@@ -1044,6 +1044,8 @@ function _parseFecha(v){
 function isoToText(v){ const p=_parseFecha(v); return p ? `${p.d} de ${MESES[p.m-1]} de ${p.y}` : (v?String(v):''); }
 // Formato corto DD/MM/AAAA para las columnas de las listas.
 function fechaDMY(v){ const p=_parseFecha(v); return p ? `${String(p.d).padStart(2,'0')}/${String(p.m).padStart(2,'0')}/${p.y}` : (v?String(v):''); }
+// DD/MM/AAAA a partir de un timestamp (ms), en hora local.
+function tsDMY(ms){ const dt=new Date(ms); if(isNaN(dt.getTime())) return ''; return `${String(dt.getDate()).padStart(2,'0')}/${String(dt.getMonth()+1).padStart(2,'0')}/${dt.getFullYear()}`; }
 // ---- Encabezado de columna ordenable ----
 // Devuelve un <th> clickeable que alterna asc/desc sobre el objeto de orden
 // (clientSort, quoteSort, etc.) y re-renderiza la vista indicada.
@@ -1418,7 +1420,7 @@ function rowOppRental(o){
     <td>${esc(titleCase(o.comercial)||'—')}</td>
     <td class="nowrap"><select class="state-sel opp-state-sel" data-oid="${o.id}" onclick="event.stopPropagation()">${estadoSel}</select></td>
     <td class="r nowrap">${o.valor!=null?('$ '+fmt(o.valor)):'—'}</td>
-    <td class="r nowrap">${o.fechaLimite?fmtFecha(o.fechaLimite):new Date(o.created).toLocaleDateString('es-AR')}</td>
+    <td class="r nowrap">${o.fechaLimite?esc(fechaDMY(o.fechaLimite)):tsDMY(o.created)}</td>
     <td style="color:#94917f">—</td>
     <td class="r nowrap" style="color:#94917f">—</td>
     <td></td>
@@ -2137,7 +2139,7 @@ function rowOpp(o){
     <td>${esc(titleCase(o.tipo)||'—')}</td>
     <td class="nowrap"><span class="badge pr-${o.prioridad}">${OPP_PRIO_LBL[o.prioridad]||o.prioridad}</span></td>
     <td class="nowrap"><span class="badge os-${o.state}">${OPP_ESTADO_LBL[o.state]||o.state}</span></td>
-    <td class="nowrap">${fmtFecha(o.fechaLimite)}${ppChip}</td>
+    <td class="nowrap">${(fechaDMY(o.fechaLimite)||'—')}${ppChip}</td>
     <td class="r nowrap">${valor}</td>
   </tr>`;
 }
