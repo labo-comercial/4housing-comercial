@@ -5111,7 +5111,9 @@ function habilitarResizeColumnas(root){
     // de cada columna manda y la tabla puede crecer más allá del contenedor
     // (que tiene scroll-x). Con width:auto el navegador la seguía comprimiendo.
     let suma=0;
-    ths.forEach((th,i)=>{ const w=saved[i]||th.offsetWidth||100; th.style.width=w+'px'; suma+=w; });
+    // box-sizing:border-box → style.width == ancho real (offsetWidth), sin que el
+    // padding descuadre la redistribución al arrastrar.
+    ths.forEach((th,i)=>{ const w=saved[i]||th.offsetWidth||100; th.style.boxSizing='border-box'; th.style.width=w+'px'; suma+=w; });
     t.style.tableLayout='fixed';
     t.style.width=suma+'px';
     if(t.dataset.resizable!=='1'){
@@ -5129,17 +5131,22 @@ function habilitarResizeColumnas(root){
       h.addEventListener('click', ev=>ev.stopPropagation()); // no disparar el orden
       h.addEventListener('mousedown', ev=>{
         ev.preventDefault(); ev.stopPropagation();
-        const startX=ev.clientX, startW=th.offsetWidth, startTablaW=t.offsetWidth;
+        // Modelo "achicar la vecina": lo que crece esta columna se lo saca a la de
+        // al lado, así el ancho total de la tabla no cambia (nunca se superponen).
+        const next=ths[i+1];
+        const startX=ev.clientX, startW=th.offsetWidth, startWNext=next?next.offsetWidth:0;
         h.classList.add('dragging');
         const mm=e2=>{
-          const nw=Math.max(50, startW+(e2.clientX-startX));
-          th.style.width=nw+'px';
-          t.style.width=(startTablaW+(nw-startW))+'px'; // la tabla crece/achica con la columna
+          let d=e2.clientX-startX;
+          d=Math.max(d, 50-startW);                 // esta no baja de 50px
+          if(next) d=Math.min(d, startWNext-50);    // la vecina tampoco
+          th.style.width=(startW+d)+'px';
+          if(next) next.style.width=(startWNext-d)+'px';
         };
         const mu=()=>{
           document.removeEventListener('mousemove',mm); document.removeEventListener('mouseup',mu);
           h.classList.remove('dragging');
-          try{ const s=JSON.parse(localStorage.getItem(sig)||'{}'); s[i]=th.offsetWidth; localStorage.setItem(sig, JSON.stringify(s)); }catch(_){}
+          try{ const s=JSON.parse(localStorage.getItem(sig)||'{}'); s[i]=th.offsetWidth; if(next) s[i+1]=next.offsetWidth; localStorage.setItem(sig, JSON.stringify(s)); }catch(_){}
         };
         document.addEventListener('mousemove',mm); document.addEventListener('mouseup',mu);
       });
