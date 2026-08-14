@@ -685,8 +685,12 @@ async function sbFetch(path, opts={}, _retry=false){
     const txt = await res.text().catch(()=> '');
     throw new Error('Supabase '+res.status+': '+txt);
   }
+  // Respuestas sin cuerpo (204, o 201/200 con Prefer: return=minimal) devuelven
+  // texto vacío: hacer res.json() sobre eso tira SyntaxError ("The string did not
+  // match the expected pattern" en Safari). Leemos el texto y parseamos solo si hay.
   if(res.status===204) return null;
-  return res.json();
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
 }
 
 const SB = {
