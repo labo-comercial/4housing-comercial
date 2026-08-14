@@ -4823,6 +4823,67 @@ function tablaCierres(unidad){
   }).join('');
   return `<div style="overflow-x:auto"><table class="grid"><thead><tr>${th}</tr></thead><tbody>${rows}</tbody></table></div>`;
 }
+/* ---- Gráficas de evolución (SVG a mano, sin librerías) ---- */
+let cierresGrafUnidad = 'ventas';
+function setCierresGraf(u){ cierresGrafUnidad = u; VIEWS.cierres(); }
+window.setCierresGraf = setCierresGraf;
+function _niceMax(m){ if(m<=0) return 1; const p=Math.pow(10,Math.floor(Math.log10(m))); const r=m/p; const n=r<=1?1:r<=2?2:r<=5?5:10; return n*p; }
+function _fmtC(n){ n=Math.round(+n||0); const a=Math.abs(n); if(a>=1e6) return (n/1e6).toLocaleString('es-AR',{maximumFractionDigits:1})+'M'; if(a>=1e4) return (n/1e3).toLocaleString('es-AR',{maximumFractionDigits:0})+'k'; return n.toLocaleString('es-AR'); }
+function nombreMesCorto(periodo){ const [y,m]=periodo.split('-'); return (MESES[(+m)-1]||m).slice(0,3)+" '"+y.slice(2); }
+function _svgBars(rows, o){
+  o=o||{}; const W=560,H=190,pL=48,pR=10,pT=14,pB=24; const ih=H-pT-pB, iw=W-pL-pR;
+  const nm=_niceMax(Math.max(1,...rows.map(r=>+r.value||0))); const n=rows.length||1, slot=iw/n, bw=Math.min(38,slot*0.55);
+  const Y=v=>pT+ih*(1-v/nm); const f=o.fmt||(v=>Math.round(v).toLocaleString('es-AR'));
+  let g='';
+  [0,0.5,1].forEach(t=>{ const y=pT+ih*(1-t); g+=`<line x1="${pL}" y1="${y.toFixed(1)}" x2="${W-pR}" y2="${y.toFixed(1)}" stroke="#EEECE4"/><text x="${pL-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#A8A69E">${f(nm*t)}</text>`; });
+  rows.forEach((r,i)=>{ const v=+r.value||0; const x=pL+slot*i+(slot-bw)/2, y=Y(v);
+    g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,pT+ih-y).toFixed(1)}" rx="3" fill="${o.color||'#5f7a4e'}"><title>${r.label}: ${f(v)}${o.suffix||''}</title></rect>`;
+    g+=`<text x="${(x+bw/2).toFixed(1)}" y="${(pT+ih+15).toFixed(1)}" text-anchor="middle" font-size="10" fill="#888780">${r.label}</text>`; });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto" role="img">${g}</svg>`;
+}
+function _svgGrouped(rows, o){
+  o=o||{}; const W=560,H=190,pL=34,pR=10,pT=14,pB=24; const ih=H-pT-pB, iw=W-pL-pR;
+  const nm=_niceMax(Math.max(1,...rows.flatMap(r=>r.values.map(v=>+v||0)))); const n=rows.length||1, slot=iw/n, bw=Math.min(16,slot*0.35), gap=3;
+  const Y=v=>pT+ih*(1-v/nm); const cols=o.colors||['#0F6E56','#A32D2D'], names=o.names||['A','B'];
+  let g='';
+  [0,0.5,1].forEach(t=>{ const y=pT+ih*(1-t); g+=`<line x1="${pL}" y1="${y.toFixed(1)}" x2="${W-pR}" y2="${y.toFixed(1)}" stroke="#EEECE4"/><text x="${pL-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#A8A69E">${Math.round(nm*t)}</text>`; });
+  rows.forEach((r,i)=>{ const cx=pL+slot*i+slot/2;
+    r.values.forEach((vv,k)=>{ const v=+vv||0, x=cx-bw-gap/2+k*(bw+gap), y=Y(v);
+      g+=`<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw}" height="${Math.max(0,pT+ih-y).toFixed(1)}" rx="2.5" fill="${cols[k]}"><title>${r.label} · ${names[k]}: ${v}</title></rect>`; });
+    g+=`<text x="${cx.toFixed(1)}" y="${(pT+ih+15).toFixed(1)}" text-anchor="middle" font-size="10" fill="#888780">${r.label}</text>`; });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto" role="img">${g}</svg>`;
+}
+function _svgLine(rows, o){
+  o=o||{}; const W=560,H=190,pL=48,pR=12,pT=14,pB=24; const ih=H-pT-pB, iw=W-pL-pR;
+  const vals=rows.map(r=>r.value).filter(v=>v!=null&&isFinite(v)).map(Number);
+  const nm=o.max||_niceMax(Math.max(1,...(vals.length?vals:[1]))); const n=rows.length||1;
+  const X=i=> pL+(n===1? iw/2 : iw*i/(n-1)); const Y=v=>pT+ih*(1-v/nm); const f=o.fmt||(v=>Math.round(v).toLocaleString('es-AR'));
+  let g='';
+  [0,0.5,1].forEach(t=>{ const y=pT+ih*(1-t); g+=`<line x1="${pL}" y1="${y.toFixed(1)}" x2="${W-pR}" y2="${y.toFixed(1)}" stroke="#EEECE4"/><text x="${pL-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="10" fill="#A8A69E">${f(nm*t)}${o.suffix||''}</text>`; });
+  let d='', started=false;
+  rows.forEach((r,i)=>{ const v=r.value; if(v==null||!isFinite(v)){ started=false; return; } d+=`${started?'L':'M'}${X(i).toFixed(1)} ${Y(+v).toFixed(1)} `; started=true; });
+  if(d) g+=`<path d="${d.trim()}" fill="none" stroke="${o.color||'#185FA5'}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+  rows.forEach((r,i)=>{ if(r.value==null||!isFinite(r.value))return; g+=`<circle cx="${X(i).toFixed(1)}" cy="${Y(+r.value).toFixed(1)}" r="3.5" fill="${o.color||'#185FA5'}"><title>${r.label}: ${f(+r.value)}${o.suffix||''}</title></circle>`; });
+  rows.forEach((r,i)=>{ g+=`<text x="${X(i).toFixed(1)}" y="${(pT+ih+15).toFixed(1)}" text-anchor="middle" font-size="10" fill="#888780">${r.label}</text>`; });
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="max-width:100%;height:auto" role="img">${g}</svg>`;
+}
+function _chartCard(titulo, svg, legend){
+  return `<div style="margin-bottom:20px"><div style="font-size:13.5px;font-weight:600;color:#37432c">${titulo}</div>${legend||''}<div style="margin-top:6px">${svg}</div></div>`;
+}
+function _serieCierres(unidad){
+  return (DB.cierres||[]).filter(c=> c.unidad===unidad).sort((a,b)=> a.periodo<b.periodo?-1:1).map(c=>({ periodo:c.periodo, ind:c.indicadores||{} }));
+}
+function graficasCierres(unidad){
+  const s=_serieCierres(unidad); if(!s.length) return '<div class="help" style="padding:10px 2px">Todavía no hay cierres para graficar. Generá o esperá el primer cierre.</div>';
+  const L=p=>nombreMesCorto(p); let h='';
+  if(unidad==='ventas') h+=_chartCard('Monto cotizado por mes (USD)', _svgBars(s.map(x=>({label:L(x.periodo), value:x.ind.monto_cotizado_usd||0})), {color:'#185FA5', fmt:_fmtC}));
+  h+=_chartCard('Cotizaciones emitidas por mes', _svgBars(s.map(x=>({label:L(x.periodo), value:x.ind.cotizaciones_mes||0})), {color:'#5f7a4e'}));
+  const legGP='<div style="display:flex;gap:14px;font-size:11.5px;color:#888780;margin-top:2px"><span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#0F6E56;margin-right:4px"></span>Ganadas</span><span><span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:#A32D2D;margin-right:4px"></span>Perdidas</span></div>';
+  h+=_chartCard('Ganadas vs perdidas por mes', _svgGrouped(s.map(x=>({label:L(x.periodo), values:[x.ind.ganadas_mes||0, x.ind.perdidas_mes||0]})), {colors:['#0F6E56','#A32D2D'], names:['Ganadas','Perdidas']}), legGP);
+  h+=_chartCard('Tasa de conversión por mes', _svgLine(s.map(x=>({label:L(x.periodo), value:x.ind.conversion_mes||0})), {color:'#185FA5', suffix:'%', max:100}));
+  if(unidad==='ventas') h+=_chartCard('Pipeline por mes (USD)', _svgLine(s.map(x=>({label:L(x.periodo), value:(x.ind.pipeline_usd!=null?x.ind.pipeline_usd:null)})), {color:'#BA7517', fmt:_fmtC})+'<div class="help" style="font-size:11px;margin-top:2px">Solo desde el primer cierre real; los meses sin foto de stock no aparecen.</div>');
+  return h;
+}
 VIEWS.cierres = function(){
   setHeader('Cierres mensuales','Registro histórico de indicadores comerciales');
   const html = `
@@ -4835,6 +4896,16 @@ VIEWS.cierres = function(){
         </div>
         <button class="btn ghost" onclick="backfillCierres()">Generar cierres faltantes</button>
       </div>
+    </div></div>
+    <div class="card"><div class="card-b">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+        <div style="font-size:15px;font-weight:700;color:#37432c">Evolución</div>
+        <div style="display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden">
+          <button class="btn ghost" style="border:none;border-radius:0;padding:6px 14px;${cierresGrafUnidad==='rental'?'background:#eef0ea;color:#37432c':''}" onclick="setCierresGraf('rental')">Rental</button>
+          <button class="btn ghost" style="border:none;border-radius:0;padding:6px 14px;${cierresGrafUnidad==='ventas'?'background:#eef0ea;color:#37432c':''}" onclick="setCierresGraf('ventas')">Ventas</button>
+        </div>
+      </div>
+      ${graficasCierres(cierresGrafUnidad)}
     </div></div>
     <div class="card"><div class="card-b">
       <div style="font-size:15px;font-weight:700;color:#37432c;margin-bottom:10px">Rental</div>
