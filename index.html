@@ -87,7 +87,9 @@ table.grid th{position:relative;}
 .col-resizer{position:absolute;top:0;right:0;width:8px;height:100%;cursor:col-resize;user-select:none;z-index:2;touch-action:none;}
 .col-resizer:hover,.col-resizer.dragging{background:rgba(95,122,78,.4);}
 /* Envoltorio con scroll horizontal para cuando se ensanchan columnas */
-.grid-scroll{overflow-x:auto;max-width:100%;}
+table.grid th, table.grid td{overflow:hidden;}
+ table.grid th, table.grid td.nowrap{text-overflow:ellipsis;}
+ .grid-scroll{overflow-x:auto;max-width:100%;}
 table.grid th.th-sort:hover{color:var(--olive-deep);background:#f3f1e7;}
 table.grid th.th-active{color:var(--olive-deep);}
 table.grid th .th-arrow{font-size:9px;margin-left:2px;}
