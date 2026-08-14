@@ -1021,11 +1021,17 @@ function fmt(n){ return (Math.round(n)||0).toLocaleString('es-AR'); }
 function curSym(c){ return c==='ARS' ? '$' : 'USD'; }
 const MESES=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 function todayISO(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function isoToText(iso){
-  if(!iso) return '';
-  const p=String(iso).split('-'); if(p.length!==3) return iso;
-  const y=+p[0], m=+p[1], d=+p[2];
-  if(!y||!m||!d) return iso;
+// Normaliza CUALQUIER formato de fecha guardado (YYYY-MM-DD, timestamp ISO con
+// hora, DD/MM/YYYY, etc.) a un único formato "D de MES de YYYY", para que la
+// columna Fecha se vea homogénea aunque los datos vengan de orígenes distintos.
+function isoToText(v){
+  if(!v) return '';
+  let s=String(v).trim(); if(!s) return '';
+  let y,m,d,mt;
+  if(mt=/^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s)){ y=+mt[1]; m=+mt[2]; d=+mt[3]; }                    // YYYY-MM-DD (con o sin hora)
+  else if(mt=/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/.exec(s)){ d=+mt[1]; m=+mt[2]; y=+mt[3]; if(y<100) y+=2000; } // DD/MM/YYYY (local)
+  else { const dt=new Date(s); if(!isNaN(dt.getTime())){ y=dt.getFullYear(); m=dt.getMonth()+1; d=dt.getDate(); } } // último recurso
+  if(!y||!m||!d||m<1||m>12||d<1||d>31) return s;   // no interpretable: mostrar crudo
   return `${d} de ${MESES[m-1]} de ${y}`;
 }
 // ---- Encabezado de columna ordenable ----
